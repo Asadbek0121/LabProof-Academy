@@ -1,0 +1,228 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Total Redirections",
+      "type": "singlestat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(urlshortener_redirects_total)",
+          "refId": "A"
+        }
+      ],
+      "format": "none",
+      "valueMaps": [],
+      "sparkline": {
+        "show": true
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "title": "Cache Hit Rate",
+      "type": "singlestat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(urlshortener_cache_hits_total{type=\"hit\"}[5m])) / sum(rate(urlshortener_cache_hits_total[5m])) * 100",
+          "refId": "A"
+        }
+      ],
+      "format": "percent",
+      "valueMaps": [],
+      "sparkline": {
+        "show": true
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "title": "P95 Redirect Latency",
+      "type": "singlestat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(urlshortener_redirect_latency_ms_bucket[5m])) by (le))",
+          "refId": "A"
+        }
+      ],
+      "format": "ms",
+      "valueMaps": [],
+      "sparkline": {
+        "show": true
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "title": "Rate Limit Violations",
+      "type": "singlestat",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(urlshortener_rate_limit_hits_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "format": "pps",
+      "valueMaps": [],
+      "sparkline": {
+        "show": true
+      }
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 5,
+      "title": "Throughput (Redirects & API)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(urlshortener_redirects_total[5m])) by (status)",
+          "legendFormat": "Redirect: {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(urlshortener_api_request_duration_ms_count[5m])) by (route)",
+          "legendFormat": "API: {{route}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 6,
+      "title": "Latencies (P50, P90, P99)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(urlshortener_redirect_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "Redirect P50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.90, sum(rate(urlshortener_redirect_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "Redirect P90",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(urlshortener_redirect_latency_ms_bucket[5m])) by (le))",
+          "legendFormat": "Redirect P99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "id": 7,
+      "title": "Database Query Latency",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(urlshortener_db_query_duration_ms_bucket[5m])) by (le, type))",
+          "legendFormat": "DB {{type}} P95",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "id": 8,
+      "title": "System Memory & CPU Usage",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "urlshortener_process_cpu_user_seconds_total",
+          "legendFormat": "CPU User Seconds",
+          "refId": "A"
+        },
+        {
+          "expr": "urlshortener_process_resident_memory_bytes",
+          "legendFormat": "Resident Memory",
+          "refId": "B"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["url-shortener", "production"],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "URL Shortener Observability",
+  "weekStart": ""
+}

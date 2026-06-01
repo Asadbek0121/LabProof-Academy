@@ -1,0 +1,234 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: url-shortener
+data:
+  01-schema.sql: |
+    -- Enable extensions
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+    CREATE EXTENSION IF NOT EXISTS "btree_gin";
+
+    -- USERS TABLE
+    CREATE TABLE IF NOT EXISTS users (
+        id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        email           VARCHAR(255) UNIQUE NOT NULL,
+        password_hash   VARCHAR(255),
+        name            VARCHAR(255),
+        plan            VARCHAR(20) DEFAULT 'free' CHECK (plan IN ('free', 'pro', 'enterprise')),
+        is_active       BOOLEAN DEFAULT TRUE,
+        is_verified     BOOLEAN DEFAULT FALSE,
+        api_key         VARCHAR(64) UNIQUE,
+        api_key_created_at TIMESTAMPTZ,
+        rate_limit_override INTEGER,
+        monthly_clicks  BIGINT DEFAULT 0,
+        total_urls      INTEGER DEFAULT 0,
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW(),
+        last_login_at   TIMESTAMPTZ,
+        metadata        JSONB DEFAULT '{}'
+    );
+
+    -- URLS TABLE
+    CREATE TABLE IF NOT EXISTS urls (
+        id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        short_code      VARCHAR(50) UNIQUE NOT NULL,
+        original_url    TEXT NOT NULL,
+        user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+        title           VARCHAR(500),
+        description     TEXT,
+        tags            TEXT[] DEFAULT '{}',
+        is_active       BOOLEAN DEFAULT TRUE,
+        is_custom       BOOLEAN DEFAULT FALSE,
+        password_hash   VARCHAR(255),
+        max_clicks      INTEGER,
+        click_count     BIGINT DEFAULT 0,
+        unique_clicks   BIGINT DEFAULT 0,
+        expires_at      TIMESTAMPTZ,
+        utm_source      VARCHAR(255),
+        utm_medium      VARCHAR(255),
+        utm_campaign    VARCHAR(255),
+        utm_term        VARCHAR(255),
+        utm_content     VARCHAR(255),
+        created_at      TIMESTAMPTZ DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ DEFAULT NOW(),
+        last_accessed_at TIMESTAMPTZ,
+        metadata        JSONB DEFAULT '{}'
+    );
+
+    -- ANALYTICS TABLE
+    CREATE TABLE IF NOT EXISTS analytics (
+        id              BIGSERIAL,
+        url_id          UUID NOT NULL REFERENCES urls(id) ON DELETE CASCADE,
+        short_code      VARCHAR(50) NOT NULL,
+        clicked_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ip_address      INET,
+        ip_hash         VARCHAR(64),
+        country         VARCHAR(2),
+        country_name    VARCHAR(100),
+        city            VARCHAR(100),
+        region          VARCHAR(100),
+        latitude        DECIMAL(9,6),
+        longitude       DECIMAL(9,6),
+        user_agent      TEXT,
+        browser         VARCHAR(100),
+        browser_version VARCHAR(50),
+        os              VARCHAR(100),
+        os_version      VARCHAR(50),
+        device_type     VARCHAR(20) CHECK (device_type IN ('desktop', 'mobile', 'tablet', 'bot', 'unknown')),
+        referrer        TEXT,
+        referrer_domain VARCHAR(255),
+        is_unique       BOOLEAN DEFAULT FALSE,
+        session_id      VARCHAR(64),
+        language        VARCHAR(20),
+        screen_width    INTEGER,
+        screen_height   INTEGER
+    ) PARTITION BY RANGE (clicked_at);
+
+    -- Create initial partitions (current month + next 3 months)
+    DO $$
+    DECLARE
+        start_date DATE := DATE_TRUNC('month', CURRENT_DATE);
+        partition_date DATE;
+        partition_name TEXT;
+        next_date DATE;
+    BEGIN
+        FOR i IN 0..3 LOOP
+            partition_date := start_date + (i || ' months')::INTERVAL;
+            next_date := partition_date + '1 month'::INTERVAL;
+            partition_name := 'analytics_' || TO_CHAR(partition_date, 'YYYY_MM');
+            
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_tables 
+                WHERE tablename = partition_name
+            ) THEN
+                EXECUTE FORMAT(
+                    'CREATE TABLE %I PARTITION OF analytics 
+                     FOR VALUES FROM (%L) TO (%L)',
+                    partition_name, partition_date, next_date
+                );
+            END IF;
+        END LOOP;
+    END $$;
+
+    -- RATE LIMIT VIOLATIONS TABLE
+    CREATE TABLE IF NOT EXISTS rate_limit_violations (
+        id          BIGSERIAL PRIMARY KEY,
+        identifier  VARCHAR(255) NOT NULL,
+        endpoint    VARCHAR(255),
+        violated_at TIMESTAMPTZ DEFAULT NOW(),
+        request_count INTEGER,
+        blocked     BOOLEAN DEFAULT FALSE
+    );
+
+    -- API KEYS TABLE
+    CREATE TABLE IF NOT EXISTS api_keys (
+        id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        key_hash    VARCHAR(64) UNIQUE NOT NULL,
+        key_prefix  VARCHAR(10) NOT NULL,
+        name        VARCHAR(255),
+        scopes      TEXT[] DEFAULT '{"read", "write"}',
+        is_active   BOOLEAN DEFAULT TRUE,
+        last_used_at TIMESTAMPTZ,
+        expires_at  TIMESTAMPTZ,
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        ip_whitelist INET[] DEFAULT NULL
+    );
+
+    -- AUDIT LOGS TABLE
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+        action      VARCHAR(100) NOT NULL,
+        resource    VARCHAR(100),
+        resource_id VARCHAR(255),
+        ip_address  INET,
+        user_agent  TEXT,
+        payload     JSONB,
+        result      VARCHAR(20) CHECK (result IN ('success', 'failure')),
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- INDEXES
+    CREATE INDEX IF NOT EXISTS idx_urls_short_code ON urls(short_code);
+    CREATE INDEX IF NOT EXISTS idx_urls_user_id ON urls(user_id);
+    CREATE INDEX IF NOT EXISTS idx_urls_created_at ON urls(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_urls_is_active ON urls(is_active) WHERE is_active = TRUE;
+    CREATE INDEX IF NOT EXISTS idx_urls_tags ON urls USING GIN(tags);
+
+    CREATE INDEX IF NOT EXISTS idx_analytics_url_id ON analytics(url_id, clicked_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_analytics_short_code ON analytics(short_code, clicked_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_analytics_clicked_at ON analytics(clicked_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key) WHERE api_key IS NOT NULL;
+
+    -- TRIGGERS & FUNCTIONS
+    CREATE OR REPLACE FUNCTION update_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE TRIGGER trigger_users_updated_at
+        BEFORE UPDATE ON users
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+    CREATE OR REPLACE TRIGGER trigger_urls_updated_at
+        BEFORE UPDATE ON urls
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+    CREATE OR REPLACE FUNCTION increment_user_url_count()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        IF NEW.user_id IS NOT NULL THEN
+            UPDATE users SET total_urls = total_urls + 1 WHERE id = NEW.user_id;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE OR REPLACE TRIGGER trigger_url_count
+        AFTER INSERT ON urls
+        FOR EACH ROW EXECUTE FUNCTION increment_user_url_count();
+
+    -- MATERIALIZED VIEW
+    CREATE MATERIALIZED VIEW IF NOT EXISTS dashboard_stats AS
+    SELECT
+        DATE_TRUNC('day', clicked_at) AS day,
+        short_code,
+        COUNT(*) AS total_clicks,
+        COUNT(*) FILTER (WHERE is_unique) AS unique_clicks,
+        COUNT(DISTINCT country) AS countries,
+        MODE() WITHIN GROUP (ORDER BY device_type) AS top_device,
+        MODE() WITHIN GROUP (ORDER BY browser) AS top_browser,
+        MODE() WITHIN GROUP (ORDER BY country) AS top_country
+    FROM analytics
+    WHERE clicked_at >= NOW() - INTERVAL '30 days'
+    GROUP BY DATE_TRUNC('day', clicked_at), short_code;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_dashboard_stats_day_code ON dashboard_stats(day, short_code);
+
+    CREATE OR REPLACE FUNCTION refresh_dashboard_stats()
+    RETURNS void AS $$
+    BEGIN
+        REFRESH MATERIALIZED VIEW CONCURRENTLY dashboard_stats;
+    END;
+    $$ LANGUAGE plpgsql;
+
+  02-seed.sql: |
+    -- Create test users
+    INSERT INTO users (id, email, password_hash, name, plan, created_at)
+    VALUES
+      ('550e8400-e29b-41d4-a716-446655440000', 'admin@short.ly', '$2a$12$K.zR/WJ/W43R92.k72pGqu7rE6b8G0b3nBfN1pXz7K6K6K6K6K6K6', 'Admin Short.ly', 'enterprise', NOW() - INTERVAL '30 days')
+    ON CONFLICT (email) DO NOTHING;
+
+    -- Create test URL
+    INSERT INTO urls (id, short_code, original_url, user_id, title, description, tags, click_count, is_active, created_at)
+    VALUES
+      ('110e8400-e29b-41d4-a716-446655440000', 'google', 'https://google.com', '550e8400-e29b-41d4-a716-446655440000', 'Google', 'Search engine giant', '{"search", "tech"}', 0, TRUE, NOW() - INTERVAL '10 days')
+    ON CONFLICT (short_code) DO NOTHING;

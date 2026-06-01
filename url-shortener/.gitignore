@@ -1,0 +1,24 @@
+.env
+.env.local
+node_modules/
+logs/
+*.log
+coverage/
+.nyc_output/
+dist/
+build/
+*.pid
+
+# SSL certs
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

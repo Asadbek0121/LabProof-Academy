@@ -1,0 +1,58 @@
+---
+# ============================================================
+# ConfigMap — non-sensitive app configuration
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: url-shortener-config
+  namespace: url-shortener
+  labels:
+    app: url-shortener
+data:
+  NODE_ENV:                   "production"
+  PORT:                       "3000"
+  HOST:                       "0.0.0.0"
+  DB_HOST:                    "postgres-service"
+  DB_PORT:                    "5432"
+  DB_NAME:                    "urlshortener"
+  DB_USER:                    "urluser"
+  DB_POOL_MIN:                "2"
+  DB_POOL_MAX:                "20"
+  REDIS_HOST:                 "redis-service"
+  REDIS_PORT:                 "6379"
+  LOG_LEVEL:                  "info"
+  METRICS_ENABLED:            "true"
+  METRICS_PATH:               "/metrics"
+  SHORT_CODE_LENGTH:          "7"
+  CACHE_TTL_SHORT:            "300"
+  CACHE_TTL_LONG:             "3600"
+  CACHE_TTL_ANALYTICS:        "900"
+  ANALYTICS_FLUSH_INTERVAL:   "5000"
+  ANALYTICS_BATCH_SIZE:       "100"
+  RATE_LIMIT_WINDOW_MS:       "60000"
+  RATE_LIMIT_MAX_REQUESTS:    "100"
+  TRUST_PROXY:                "1"
+  ANALYTICS_RETENTION_DAYS:   "365"
+  CORS_ORIGINS:               "https://short.ly,https://www.short.ly"
+  BASE_URL:                   "https://short.ly"
+
+---
+# ============================================================
+# Secret — sensitive credentials (base64 encoded)
+# In production: use Kubernetes Secrets Store CSI / Vault
+# ============================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: url-shortener-secrets
+  namespace: url-shortener
+  labels:
+    app: url-shortener
+type: Opaque
+stringData:
+  DB_PASSWORD:      "StrongPassword123!"
+  REDIS_PASSWORD:   "RedisPassword456!"
+  JWT_SECRET:       "your-super-secret-jwt-key-change-in-production-min-32-chars"
+  METRICS_SECRET:   "metrics-secret-token"
+  IP_HASH_SALT:     "analytics-ip-salt-change-me"

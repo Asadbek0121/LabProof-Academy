@@ -1,0 +1,45 @@
+ ⨯ Failed to load next.config.ts, see more info here https://nextjs.org/docs/messages/next-config-error
+node:internal/modules/cjs/loader:1475
+  const err = new Error(message);
+              ^
+
+Error: Cannot find module '../../../../server/api-utils/get-cookie-parser'
+Require stack:
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/shared/lib/router/utils/prepare-destination.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/server-utils.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/lib/incremental-cache/index.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/export/helpers/create-incremental-cache.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/utils.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/swc/options.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/swc/index.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/next-config-ts/transpile-config.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/config.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/cli/next-test.js
+- /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/bin/next
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1475:15)
+    at /Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/require-hook.js:57:36
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1048:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1072:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1093:12)
+    at Module._load (node:internal/modules/cjs/loader:1261:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1575:12)
+    at mod.require (/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/require-hook.js:68:28)
+    at require (node:internal/modules/helpers:191:16) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/shared/lib/router/utils/prepare-destination.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/server-utils.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/lib/incremental-cache/index.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/export/helpers/create-incremental-cache.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/utils.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/swc/options.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/swc/index.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/build/next-config-ts/transpile-config.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/server/config.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/cli/next-test.js',
+    '/Users/macbookairm1/Documents/New project 3/edulab-admin/node_modules/next/dist/bin/next'
+  ]
+}
+
+Node.js v25.9.0

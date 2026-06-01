@@ -1,0 +1,7 @@
+**/.env
+**/.env.*
+!**/.env.example
+
+# GitHub rejects files over 100 MB; these are generated local artifacts.
+edulab-admin/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node
+edulab-admin/.next/cache/webpack/server-production/0.pack
