@@ -7429,7 +7429,6 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
   }
 
   void _configureYoutubePlayer() {
-    if (!kIsWeb) return;
     final videoId = YoutubePlayerController.convertUrlToId(
       widget.topic.videoUrl.trim(),
     );
@@ -7645,7 +7644,7 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'Video YouTube ilovasida ochiladi.',
+                                'Video ilova ichida ochiladi. Agar YouTube embed bloklasa, pastdagi tugma orqali tashqi ochishingiz mumkin.',
                                 style: TextStyle(
                                   color: mutedTextColor,
                                   fontWeight: FontWeight.w800,
@@ -7733,7 +7732,7 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
                         ),
                         const Spacer(),
                         Text(
-                          'Video ko‘rish',
+                          'YouTube’da ochish',
                           style: TextStyle(
                             color: AppColors.studentPrimary,
                             fontSize: 12,

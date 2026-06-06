@@ -486,13 +486,22 @@ class SupabaseAcademyRepository {
     final phone = profile.phone.trim().isEmpty
         ? (user.phone ?? '').trim()
         : profile.phone.trim();
+    final current = await _loadProfile(user);
+    final fullName = profile.fullName.trim().isEmpty
+        ? current.fullName.trim()
+        : profile.fullName.trim();
+    final avatarUrl = profile.avatarUrl?.trim();
 
     await _supabase
         .from('profiles')
-        .update({
-          'full_name': profile.fullName.trim(),
+        .upsert({
+          'id': user.id,
+          'full_name': fullName.isEmpty ? 'Student' : fullName,
           'phone': phone.isEmpty ? null : phone,
-          'avatar_url': profile.avatarUrl?.trim() ?? '',
+          'role': current.role.name,
+          'avatar_url': avatarUrl == null || avatarUrl.isEmpty
+              ? current.avatarUrl.trim()
+              : avatarUrl,
           'gender': profile.gender.trim(),
           'age': profile.age,
           'region': profile.region.trim(),
@@ -500,8 +509,7 @@ class SupabaseAcademyRepository {
           'mahalla': profile.mahalla.trim(),
           'street': profile.street.trim(),
           'updated_at': DateTime.now().toIso8601String(),
-        })
-        .eq('id', user.id);
+        }, onConflict: 'id');
 
     return _loadProfile(user);
   }
