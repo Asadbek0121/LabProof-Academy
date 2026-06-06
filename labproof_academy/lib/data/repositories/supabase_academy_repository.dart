@@ -276,6 +276,13 @@ class SupabaseAcademyRepository {
       'attachment_name': attachmentName,
       'attachment_mime': attachmentMime,
       'attachment_size': attachmentSize,
+      'metadata': {
+        'app_user_id': user.id,
+        'full_name': profile.fullName.trim(),
+        'phone': profile.phone.trim(),
+        'last_seen_at': DateTime.now().toIso8601String(),
+        'source_device': 'student_app',
+      },
     });
   }
 
@@ -476,12 +483,15 @@ class SupabaseAcademyRepository {
 
   Future<StudentProfile> updateOwnProfile(StudentProfileUpdate profile) async {
     final user = await _currentUserOrThrow();
+    final phone = profile.phone.trim().isEmpty
+        ? (user.phone ?? '').trim()
+        : profile.phone.trim();
 
     await _supabase
         .from('profiles')
         .update({
           'full_name': profile.fullName.trim(),
-          'phone': profile.phone.trim(),
+          'phone': phone.isEmpty ? null : phone,
           'avatar_url': profile.avatarUrl?.trim() ?? '',
           'gender': profile.gender.trim(),
           'age': profile.age,
@@ -686,13 +696,15 @@ class SupabaseAcademyRepository {
         .maybeSingle();
 
     final metadata = user.userMetadata ?? {};
-    final roleName = (row?['role'] ?? metadata['role'] ?? 'student').toString();
+    final roleName = (row?['role'] ?? 'student').toString();
+    final rowPhone = (row?['phone'] ?? '').toString().trim();
+    final authPhone = (user.phone ?? '').trim();
 
     return StudentProfile(
       id: user.id,
       fullName: (row?['full_name'] ?? metadata['full_name'] ?? 'Student')
           .toString(),
-      phone: (row?['phone'] ?? user.phone ?? '').toString(),
+      phone: rowPhone.isNotEmpty ? rowPhone : authPhone,
       role: roleName == 'admin' ? UserRole.admin : UserRole.student,
       avatarUrl: (row?['avatar_url'] ?? '').toString(),
       gender: (row?['gender'] ?? '').toString(),
@@ -789,8 +801,7 @@ class SupabaseAcademyRepository {
               ),
             );
       final orderIndex = (row['order_index'] as num?)?.round() ?? 1;
-      final freeTopicLimit = (row['free_topic_limit'] as num?)?.round() ?? 1;
-      final moduleRequiresSubscription = row['requires_subscription'] == true;
+      const freeTopicLimit = 1;
       final isUnlocked = orderIndex == 1 || previousModulePassed;
       var firstIncompleteMarked = false;
 
@@ -817,7 +828,9 @@ class SupabaseAcademyRepository {
         final quizDone =
             topicQuestions.isEmpty || progress?['quiz_completed'] == true;
         final topicCompleted = readingDone && videoDone && quizDone;
-        final status = !isUnlocked
+        final isFreePreview = topicIndex < freeTopicLimit;
+        final requiresSubscription = !isFreePreview;
+        final status = !isUnlocked || requiresSubscription
             ? TopicStatus.locked
             : topicCompleted
             ? TopicStatus.completed
@@ -842,13 +855,11 @@ class SupabaseAcademyRepository {
           formula: (pdfLesson?['body'] ?? '').toString(),
           pdfUrl: (pdfLesson?['file_url'] ?? '').toString(),
           videoUrl: (videoLesson?['file_url'] ?? '').toString(),
+          videoChapters: _lessonChaptersFromValue(videoLesson?['chapters']),
           quizQuestions: topicQuestions,
           materials: materials,
-          isFreePreview:
-              topicRow['is_free'] == true || topicIndex < freeTopicLimit,
-          requiresSubscription:
-              topicRow['requires_subscription'] == true ||
-              (moduleRequiresSubscription && topicIndex >= freeTopicLimit),
+          isFreePreview: isFreePreview,
+          requiresSubscription: requiresSubscription,
         );
       }).toList();
 
@@ -885,7 +896,7 @@ class SupabaseAcademyRepository {
         category: category,
         finalQuestions: finalQuestionsByModule[moduleId] ?? const [],
         freeTopicLimit: freeTopicLimit,
-        requiresSubscription: moduleRequiresSubscription,
+        requiresSubscription: topics.any((topic) => topic.requiresSubscription),
         subscriptionPriceLabel: (row['subscription_price_label'] ?? '')
             .toString(),
       );
@@ -983,7 +994,8 @@ class SupabaseAcademyRepository {
 
   Future<List<Map<String, dynamic>>> _fetchStudentLessonRows() async {
     const baseColumns = 'topic_id, kind, title, body, file_url, order_index';
-    const extendedColumns = '$baseColumns, duration_seconds, source_type';
+    const extendedColumns =
+        '$baseColumns, duration_seconds, source_type, chapters';
 
     try {
       final rows = await _supabase
@@ -999,7 +1011,14 @@ class SupabaseAcademyRepository {
           .order('order_index');
       return (rows as List<dynamic>)
           .cast<Map<String, dynamic>>()
-          .map((row) => {...row, 'duration_seconds': 0, 'source_type': ''})
+          .map(
+            (row) => {
+              ...row,
+              'duration_seconds': 0,
+              'source_type': '',
+              'chapters': const [],
+            },
+          )
           .toList();
     }
   }
@@ -1026,8 +1045,63 @@ class SupabaseAcademyRepository {
         seconds: (row['duration_seconds'] as num?)?.round() ?? 0,
       ),
       sourceType: (row['source_type'] ?? '').toString(),
+      chapters: _lessonChaptersFromValue(row['chapters']),
     );
   }
+
+  List<VideoLessonChapter> _lessonChaptersFromValue(Object? value) {
+    if (value is! List) return const [];
+
+    final chapters = <VideoLessonChapter>[];
+    for (final item in value) {
+      if (item is! Map) continue;
+      final title = (item['title'] ?? item['label'] ?? '').toString().trim();
+      if (title.isEmpty) continue;
+
+      final seconds = _chapterSecondsFromValue(
+        item['time_seconds'] ??
+            item['seconds'] ??
+            item['start_seconds'] ??
+            item['time'],
+      );
+      chapters.add(
+        VideoLessonChapter(
+          time: Duration(seconds: seconds),
+          title: title,
+        ),
+      );
+    }
+
+    chapters.sort((a, b) => a.time.compareTo(b.time));
+    return List.unmodifiable(chapters);
+  }
+
+  int _chapterSecondsFromValue(Object? value) {
+    if (value is num) return _clampChapterSeconds(value.round());
+
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return 0;
+
+    final numeric = int.tryParse(text);
+    if (numeric != null) return _clampChapterSeconds(numeric);
+
+    final parts = text.split(':').map((part) => int.tryParse(part.trim()));
+    if (parts.any((part) => part == null)) return 0;
+
+    final values = parts.cast<int>().toList(growable: false);
+    if (values.length == 2) {
+      return _clampChapterSeconds(values[0] * 60 + values[1]);
+    }
+    if (values.length == 3) {
+      return _clampChapterSeconds(
+        values[0] * 3600 + values[1] * 60 + values[2],
+      );
+    }
+
+    return 0;
+  }
+
+  int _clampChapterSeconds(int value) => value.clamp(0, 24 * 60 * 60).toInt();
 
   String _defaultLessonTitle(String kind) {
     switch (kind) {
@@ -2234,11 +2308,17 @@ class SupabaseAcademyRepository {
     final message = error.toString().toLowerCase();
     final knownOptionalColumn = [
       'duration_seconds',
+      'source_type',
       'cover_url',
       'certificate_code',
       'qr_code_url',
       'verify_url',
       'status',
+      'chapters',
+      'question_type',
+      'media_url',
+      'media_kind',
+      'explanation',
     ].any(message.contains);
     return knownOptionalColumn &&
         (message.contains('column') ||
@@ -2289,33 +2369,38 @@ class SupabaseAcademyRepository {
   Future<List<CommunityPost>> loadCommunityPosts({String? category}) async {
     try {
       final user = await _currentUserOrThrow();
-      
+
       var query = _supabase
           .from('community_posts')
-          .select('*, profiles:author_id(full_name, avatar_url, role)')
+          .select()
           .order('created_at', ascending: false);
-      
+
       final response = await query;
       var rows = (response as List<dynamic>).cast<Map<String, dynamic>>();
-      
+      final profilesById = await _loadCommunityProfiles(
+        rows.map((row) => row['author_id'].toString()),
+      );
+
       // Filter by category if needed
       if (category != null && category.isNotEmpty && category != 'Barchasi') {
-        rows = rows.where((row) => row['category'].toString() == category).toList();
+        rows = rows
+            .where((row) => row['category'].toString() == category)
+            .toList();
       }
-      
+
       // Check user's likes
       final userLikes = await _supabase
           .from('post_likes')
           .select('post_id')
           .eq('user_id', user.id);
-      
+
       final likedPostIds = (userLikes as List<dynamic>)
           .cast<Map<String, dynamic>>()
           .map((row) => row['post_id'] as String)
           .toSet();
-      
+
       return rows.map((row) {
-        final profile = row['profiles'] as Map<String, dynamic>?;
+        final profile = profilesById[row['author_id'].toString()];
         return CommunityPost(
           id: row['id'].toString(),
           authorId: row['author_id'].toString(),
@@ -2323,17 +2408,22 @@ class SupabaseAcademyRepository {
           authorAvatar: (profile?['avatar_url'] ?? '').toString(),
           authorBadge: _getRoleBadge(profile?['role']?.toString()),
           content: row['content'].toString(),
-          category: row['category'].toString(),
           likes: (row['likes_count'] as num?)?.toInt() ?? 0,
-          comments: (row['comments_count'] as num?)?.toInt() ?? 0,
+          reposts: (row['reposts_count'] as num?)?.toInt() ?? 0,
+          replies:
+              ((row['replies_count'] ?? row['comments_count']) as num?)
+                  ?.toInt() ??
+              0,
           isLiked: likedPostIds.contains(row['id'].toString()),
+          isReposted: false,
+          isBookmarked: false,
           createdAt: DateTime.parse(row['created_at'].toString()),
-          attachments: (row['attachments'] as List<dynamic>?)
+          attachments:
+              (row['attachments'] as List<dynamic>?)
                   ?.map((a) => a.toString())
                   .toList() ??
               [],
-          moduleId: row['module_id']?.toString(),
-          topicId: row['topic_id']?.toString(),
+          isPinned: row['is_pinned'] as bool? ?? false,
         );
       }).toList();
     } catch (error) {
@@ -2350,7 +2440,7 @@ class SupabaseAcademyRepository {
     String? topicId,
   }) async {
     final user = await _currentUserOrThrow();
-    
+
     final response = await _supabase
         .from('community_posts')
         .insert({
@@ -2365,9 +2455,9 @@ class SupabaseAcademyRepository {
         })
         .select()
         .single();
-    
+
     final profile = await _loadProfile(user);
-    
+
     return CommunityPost(
       id: response['id'].toString(),
       authorId: user.id,
@@ -2375,23 +2465,24 @@ class SupabaseAcademyRepository {
       authorAvatar: profile.avatarUrl,
       authorBadge: _getRoleBadge(profile.role.name),
       content: response['content'].toString(),
-      category: response['category'].toString(),
       likes: 0,
-      comments: 0,
+      reposts: 0,
+      replies: 0,
       isLiked: false,
+      isReposted: false,
+      isBookmarked: false,
       createdAt: DateTime.parse(response['created_at'].toString()),
-      attachments: (response['attachments'] as List<dynamic>?)
+      attachments:
+          (response['attachments'] as List<dynamic>?)
               ?.map((a) => a.toString())
               .toList() ??
           [],
-      moduleId: response['module_id']?.toString(),
-      topicId: response['topic_id']?.toString(),
     );
   }
 
   Future<void> toggleLike(String postId) async {
     final user = await _currentUserOrThrow();
-    
+
     // Check if already liked
     final existingLike = await _supabase
         .from('post_likes')
@@ -2399,7 +2490,7 @@ class SupabaseAcademyRepository {
         .eq('post_id', postId)
         .eq('user_id', user.id)
         .maybeSingle();
-    
+
     if (existingLike != null) {
       // Unlike
       await _supabase.from('post_likes').delete().eq('id', existingLike['id']);
@@ -2411,6 +2502,30 @@ class SupabaseAcademyRepository {
         'user_id': user.id,
       });
       // Note: We'll need to implement proper count updates via RPC or separate queries
+    }
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _loadCommunityProfiles(
+    Iterable<String> authorIds,
+  ) async {
+    final ids = authorIds
+        .where((id) => id.isNotEmpty && id != 'null')
+        .toSet()
+        .toList(growable: false);
+    if (ids.isEmpty) return const {};
+
+    try {
+      final rows = await _supabase
+          .from('profiles')
+          .select('id, full_name, avatar_url, role')
+          .inFilter('id', ids);
+
+      return {
+        for (final row in (rows as List<dynamic>).cast<Map<String, dynamic>>())
+          row['id'].toString(): row,
+      };
+    } on Object {
+      return const {};
     }
   }
 
@@ -2434,23 +2549,48 @@ class SupabaseAcademyRepository {
 
       var postsQuery = _supabase
           .from('community_posts')
-          .select('*, profiles:author_id(full_name, avatar_url, role)')
+          .select()
           .order('created_at', ascending: false)
           .limit(50);
 
       final postsResponse = await postsQuery;
       var posts = (postsResponse as List<dynamic>).cast<Map<String, dynamic>>();
+      final profilesById = await _loadCommunityProfiles(
+        posts.map((row) => row['author_id'].toString()),
+      );
 
-      // Get user's likes
+      final postIds = posts.map((row) => row['id'].toString()).toList();
+
+      // Get user's reactions
       final likesResponse = await _supabase
           .from('post_likes')
-          .select('post_id')
+          .select('post_id,reaction_type')
           .eq('user_id', user.id);
 
-      final likedPostIds = (likesResponse as List<dynamic>)
-          .cast<Map<String, dynamic>>()
-          .map((row) => row['post_id'] as String)
-          .toSet();
+      final userReactions = <String, String>{};
+      for (final row
+          in (likesResponse as List<dynamic>).cast<Map<String, dynamic>>()) {
+        userReactions[row['post_id'].toString()] =
+            (row['reaction_type'] ?? 'like').toString();
+      }
+
+      final reactionCounts = <String, ({int likes, int dislikes})>{};
+      if (postIds.isNotEmpty) {
+        final reactionsResponse = await _supabase
+            .from('post_likes')
+            .select('post_id,reaction_type')
+            .inFilter('post_id', postIds);
+        for (final row
+            in (reactionsResponse as List<dynamic>)
+                .cast<Map<String, dynamic>>()) {
+          final postId = row['post_id'].toString();
+          final reaction = (row['reaction_type'] ?? 'like').toString();
+          final current = reactionCounts[postId] ?? (likes: 0, dislikes: 0);
+          reactionCounts[postId] = reaction == 'dislike'
+              ? (likes: current.likes, dislikes: current.dislikes + 1)
+              : (likes: current.likes + 1, dislikes: current.dislikes);
+        }
+      }
 
       // Get user's reposts
       final repostsResponse = await _supabase
@@ -2475,22 +2615,28 @@ class SupabaseAcademyRepository {
           .toSet();
 
       return posts.map((row) {
-        final profile = row['profiles'] as Map<String, dynamic>?;
+        final profile = profilesById[row['author_id'].toString()];
+        final postId = row['id'].toString();
+        final counts = reactionCounts[postId];
+        final userReaction = userReactions[postId];
         return CommunityPost(
-          id: row['id'].toString(),
+          id: postId,
           authorId: row['author_id'].toString(),
           authorName: (profile?['full_name'] ?? 'Noma\'lum').toString(),
           authorAvatar: (profile?['avatar_url'] ?? '').toString(),
           authorBadge: _getRoleBadge(profile?['role']?.toString()),
           content: row['content'].toString(),
-          likes: (row['likes_count'] as num?)?.toInt() ?? 0,
+          likes: counts?.likes ?? (row['likes_count'] as num?)?.toInt() ?? 0,
+          dislikes: counts?.dislikes ?? 0,
           reposts: (row['reposts_count'] as num?)?.toInt() ?? 0,
           replies: (row['replies_count'] as num?)?.toInt() ?? 0,
-          isLiked: likedPostIds.contains(row['id'].toString()),
+          isLiked: userReaction == 'like',
+          isDisliked: userReaction == 'dislike',
           isReposted: repostedPostIds.contains(row['id'].toString()),
           isBookmarked: bookmarkedPostIds.contains(row['id'].toString()),
           createdAt: DateTime.parse(row['created_at'].toString()),
-          attachments: (row['attachments'] as List<dynamic>?)
+          attachments:
+              (row['attachments'] as List<dynamic>?)
                   ?.map((a) => a.toString())
                   .toList() ??
               [],
@@ -2539,14 +2685,45 @@ class SupabaseAcademyRepository {
       isReposted: false,
       isBookmarked: false,
       createdAt: DateTime.parse(response['created_at'].toString()),
-      attachments: (response['attachments'] as List<dynamic>?)
+      attachments:
+          (response['attachments'] as List<dynamic>?)
               ?.map((a) => a.toString())
               .toList() ??
           [],
     );
   }
 
+  Future<void> updateTwitterPost(
+    String postId, {
+    required String content,
+  }) async {
+    await _currentUserOrThrow();
+    await _supabase
+        .from('community_posts')
+        .update({
+          'content': content,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', postId);
+  }
+
+  Future<void> deleteTwitterPost(String postId) async {
+    await _currentUserOrThrow();
+    await _supabase.from('community_posts').delete().eq('id', postId);
+  }
+
   Future<void> toggleTwitterLike(String postId) async {
+    await toggleTwitterReaction(postId: postId, reactionType: 'like');
+  }
+
+  Future<void> toggleTwitterDislike(String postId) async {
+    await toggleTwitterReaction(postId: postId, reactionType: 'dislike');
+  }
+
+  Future<void> toggleTwitterReaction({
+    required String postId,
+    required String reactionType,
+  }) async {
     final user = await _currentUserOrThrow();
 
     final existingLike = await _supabase
@@ -2556,13 +2733,19 @@ class SupabaseAcademyRepository {
         .eq('user_id', user.id)
         .maybeSingle();
 
-    if (existingLike != null) {
+    if (existingLike != null &&
+        (existingLike['reaction_type'] ?? 'like').toString() == reactionType) {
       await _supabase.from('post_likes').delete().eq('id', existingLike['id']);
+    } else if (existingLike != null) {
+      await _supabase
+          .from('post_likes')
+          .update({'reaction_type': reactionType})
+          .eq('id', existingLike['id']);
     } else {
       await _supabase.from('post_likes').insert({
         'post_id': postId,
         'user_id': user.id,
-        'reaction_type': 'like',
+        'reaction_type': reactionType,
       });
     }
   }
@@ -2577,7 +2760,12 @@ class SupabaseAcademyRepository {
         .eq('user_id', user.id)
         .maybeSingle();
 
-    if (existingRepost == null) {
+    if (existingRepost != null) {
+      await _supabase
+          .from('post_reposts')
+          .delete()
+          .eq('id', existingRepost['id']);
+    } else {
       await _supabase.from('post_reposts').insert({
         'post_id': postId,
         'user_id': user.id,
@@ -2596,7 +2784,10 @@ class SupabaseAcademyRepository {
         .maybeSingle();
 
     if (existingBookmark != null) {
-      await _supabase.from('post_bookmarks').delete().eq('id', existingBookmark['id']);
+      await _supabase
+          .from('post_bookmarks')
+          .delete()
+          .eq('id', existingBookmark['id']);
     } else {
       await _supabase.from('post_bookmarks').insert({
         'post_id': postId,
@@ -2612,11 +2803,14 @@ class SupabaseAcademyRepository {
 
       final response = await _supabase
           .from('post_replies')
-          .select('*, profiles:author_id(full_name, avatar_url, role)')
+          .select()
           .eq('post_id', postId)
           .order('created_at', ascending: true);
 
       final rows = (response as List<dynamic>).cast<Map<String, dynamic>>();
+      final profilesById = await _loadCommunityProfiles(
+        rows.map((row) => row['author_id'].toString()),
+      );
 
       // Get user's likes for replies
       final likesResponse = await _supabase
@@ -2630,7 +2824,7 @@ class SupabaseAcademyRepository {
           .toSet();
 
       return rows.map((row) {
-        final profile = row['profiles'] as Map<String, dynamic>?;
+        final profile = profilesById[row['author_id'].toString()];
         return CommunityReply(
           id: row['id'].toString(),
           postId: postId,
@@ -2643,7 +2837,8 @@ class SupabaseAcademyRepository {
           isLiked: likedReplyIds.contains(row['id'].toString()),
           createdAt: DateTime.parse(row['created_at'].toString()),
           parentReplyId: row['parent_reply_id']?.toString(),
-          attachments: (row['attachments'] as List<dynamic>?)
+          attachments:
+              (row['attachments'] as List<dynamic>?)
                   ?.map((a) => a.toString())
                   .toList() ??
               [],
@@ -2690,7 +2885,8 @@ class SupabaseAcademyRepository {
       isLiked: false,
       createdAt: DateTime.parse(response['created_at'].toString()),
       parentReplyId: parentReplyId,
-      attachments: (response['attachments'] as List<dynamic>?)
+      attachments:
+          (response['attachments'] as List<dynamic>?)
               ?.map((a) => a.toString())
               .toList() ??
           [],

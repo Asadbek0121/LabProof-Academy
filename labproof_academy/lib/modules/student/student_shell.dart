@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:js_interop';
-import 'dart:js_interop_unsafe';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
@@ -20,7 +18,9 @@ import '../../core/constants/app_colors.dart';
 import '../../core/widgets/shared_widgets.dart';
 import '../../data/models/academy_models.dart';
 import '../../data/repositories/supabase_academy_repository.dart';
-import 'shared_widgets.dart' as student_shared;
+import 'pdf_embed_stub.dart' if (dart.library.html) 'pdf_embed_web.dart';
+import 'student_web_bridge_stub.dart'
+    if (dart.library.html) 'student_web_bridge_web.dart';
 import 'twitter_community.dart';
 
 enum _StudentTab { home, modules, progress, community, profile }
@@ -30,6 +30,7 @@ enum _ModuleFilter { all, open, locked, completed }
 enum _LearningStage {
   moduleList,
   moduleDetail,
+  topicIntro,
   pdfLesson,
   videoLesson,
   topicQuiz,
@@ -94,14 +95,9 @@ class _StudentShellState extends State<StudentShell> {
   @override
   void initState() {
     super.initState();
-    try {
-      globalContext.setProperty(
-        'openSupportSheet'.toJS,
-        (() {
-          unawaited(_openAdminSupportSheet());
-        }).toJS,
-      );
-    } catch (_) {}
+    registerOpenSupportSheet(() {
+      unawaited(_openAdminSupportSheet());
+    });
     _loadDashboard();
     _notificationPoller = Timer.periodic(
       const Duration(seconds: 45),
@@ -319,6 +315,17 @@ class _StudentShellState extends State<StudentShell> {
     return topic.videoUrl.trim().isNotEmpty || topic.videoMaterials.isNotEmpty;
   }
 
+  void _openSelectedTopicLesson() {
+    final topic = _selectedTopic;
+    if (topic == null) return;
+
+    setState(() {
+      _stage = _topicHasVideoContent(topic)
+          ? _LearningStage.videoLesson
+          : _LearningStage.pdfLesson;
+    });
+  }
+
   void _openModulesTab({bool detail = false}) {
     setState(() {
       _prevTabIndex = _StudentTab.values.indexOf(_tab);
@@ -337,6 +344,14 @@ class _StudentShellState extends State<StudentShell> {
     setState(() {
       _prevTabIndex = _StudentTab.values.indexOf(_tab);
       _tab = _StudentTab.progress;
+    });
+  }
+
+  void _openHomeTab() {
+    setState(() {
+      _prevTabIndex = _StudentTab.values.indexOf(_tab);
+      _tab = _StudentTab.home;
+      _stage = _LearningStage.moduleList;
     });
   }
 
@@ -405,6 +420,22 @@ class _StudentShellState extends State<StudentShell> {
     return const [];
   }
 
+  bool _allTopicsCompleted(AcademyModule module) {
+    return module.topics.isNotEmpty &&
+        module.topics.every((topic) => topic.status == TopicStatus.completed);
+  }
+
+  bool _canOpenFinalExamFromTopicResult() {
+    final module = _selectedModule;
+    final topic = _selectedTopic;
+    if (module == null || topic == null || module.topics.isEmpty) return false;
+    if (_topicScore < 70) return false;
+
+    return module.topics.every(
+      (item) => item.status == TopicStatus.completed || item.id == topic.id,
+    );
+  }
+
   Future<void> _completePdfLesson() async {
     final topic = _selectedTopic;
     if (topic == null) return;
@@ -413,9 +444,7 @@ class _StudentShellState extends State<StudentShell> {
       await _repository.markPdfCompleted(topic.id);
       if (mounted) {
         setState(() {
-          if (_topicHasVideoContent(topic)) {
-            _stage = _LearningStage.videoLesson;
-          } else if (topic.quizQuestions.isNotEmpty) {
+          if (topic.quizQuestions.isNotEmpty) {
             _quizQuestionIndex = 0;
             _selectedOption = 0;
             _topicAnswers = {};
@@ -431,22 +460,6 @@ class _StudentShellState extends State<StudentShell> {
     }
   }
 
-  Future<void> _openTopicFile({
-    required String url,
-    required String missingMessage,
-  }) async {
-    final uri = Uri.tryParse(url.trim());
-    if (uri == null || !uri.hasScheme) {
-      _showInfo(missingMessage);
-      return;
-    }
-
-    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!opened) {
-      _showInfo('Faylni ochib bo‘lmadi. Linkni admin panelda tekshiring.');
-    }
-  }
-
   Future<void> _completeVideoLesson() async {
     final topic = _selectedTopic;
     if (topic == null) return;
@@ -455,15 +468,7 @@ class _StudentShellState extends State<StudentShell> {
       await _repository.markVideoCompleted(topic.id);
       if (mounted) {
         setState(() {
-          _quizQuestionIndex = 0;
-          _selectedOption = 0;
-          _topicAnswers = {};
-          if (topic.quizQuestions.isNotEmpty) {
-            _stage = _LearningStage.topicQuiz;
-          } else {
-            _topicScore = 100;
-            _stage = _LearningStage.quizResult;
-          }
+          _stage = _LearningStage.pdfLesson;
         });
       }
     } on Object catch (error) {
@@ -508,7 +513,7 @@ class _StudentShellState extends State<StudentShell> {
 
   void _handleTopicQuizPrevious() {
     if (_quizQuestionIndex == 0) {
-      setState(() => _stage = _LearningStage.videoLesson);
+      setState(() => _stage = _LearningStage.pdfLesson);
       return;
     }
 
@@ -774,13 +779,13 @@ class _StudentShellState extends State<StudentShell> {
                     label: studentText(widget.language, 'home'),
                   ),
                   _NavItem(
-                    icon: Icons.school_outlined,
-                    activeIcon: Icons.school_rounded,
+                    icon: Icons.menu_book_outlined,
+                    activeIcon: Icons.menu_book_rounded,
                     label: 'Kurslar',
                   ),
                   _NavItem(
-                    icon: Icons.bar_chart_rounded,
-                    activeIcon: Icons.bar_chart_rounded,
+                    icon: Icons.leaderboard_outlined,
+                    activeIcon: Icons.leaderboard_rounded,
                     label: studentText(widget.language, 'progress'),
                   ),
                   _NavItem(
@@ -789,8 +794,8 @@ class _StudentShellState extends State<StudentShell> {
                     label: 'Community',
                   ),
                   _NavItem(
-                    icon: Icons.person_outline_rounded,
-                    activeIcon: Icons.person_rounded,
+                    icon: Icons.account_circle_outlined,
+                    activeIcon: Icons.account_circle_rounded,
                     label: studentText(widget.language, 'profile'),
                   ),
                 ],
@@ -816,6 +821,7 @@ class _StudentShellState extends State<StudentShell> {
             onNotifications: _openNotifications,
             onMenu: _openProfileTab,
             onContinue: () => _openModulesTab(detail: true),
+            onCourses: () => _openModulesTab(),
             onProgress: _openProgressTab,
             onQuizzes: _openQuickQuiz,
             onBookmarks: _openBookmarks,
@@ -896,6 +902,7 @@ class _StudentShellState extends State<StudentShell> {
             onNotifications: _openNotifications,
             onMenu: _openProfileTab,
             onContinue: () => _openModulesTab(detail: true),
+            onCourses: () => _openModulesTab(),
             onProgress: _openProgressTab,
             onQuizzes: _openQuickQuiz,
             onBookmarks: _openBookmarks,
@@ -954,6 +961,7 @@ class _StudentShellState extends State<StudentShell> {
           filter: _moduleFilter,
           onRefresh: _loadDashboard,
           onFilterChanged: (filter) => setState(() => _moduleFilter = filter),
+          onBackHome: _openHomeTab,
           onOpenModule: (module) {
             if (!module.isUnlocked) return;
             setState(() {
@@ -962,8 +970,6 @@ class _StudentShellState extends State<StudentShell> {
               _stage = _LearningStage.moduleDetail;
             });
           },
-          notificationCount: _unreadNotificationCount,
-          onNotifications: _openNotifications,
         );
       case _LearningStage.moduleDetail:
         if (_selectedModule == null) {
@@ -978,17 +984,40 @@ class _StudentShellState extends State<StudentShell> {
         return _ModuleDetailScreen(
           module: _selectedModule!,
           selectedTopic: _selectedTopic,
+          canOpenFinalExam: _allTopicsCompleted(_selectedModule!),
           onBack: () => setState(() => _stage = _LearningStage.moduleList),
           onOpenTopic: (topic) {
+            if (topic.requiresSubscription) {
+              setState(() {
+                _selectedTopic = topic;
+                _stage = _LearningStage.premiumPaywall;
+              });
+              return;
+            }
             if (topic.status == TopicStatus.locked) return;
             setState(() {
               _selectedTopic = topic;
-              _stage = topic.requiresSubscription
-                  ? _LearningStage.premiumPaywall
-                  : _LearningStage.pdfLesson;
+              _stage = _LearningStage.topicIntro;
             });
           },
           onFinalExam: () => setState(() => _stage = _LearningStage.finalIntro),
+        );
+      case _LearningStage.topicIntro:
+        if (_selectedModule == null || _selectedTopic == null) {
+          return _EmptyStateCard(
+            icon: Icons.topic_outlined,
+            title: _t(context, 'topic_not_found'),
+            message: _t(context, 'no_active_topic_in_module'),
+            actionLabel: _t(context, 'back_to_module'),
+            onAction: () =>
+                setState(() => _stage = _LearningStage.moduleDetail),
+          );
+        }
+        return _TopicIntroScreen(
+          module: _selectedModule!,
+          topic: _selectedTopic!,
+          onBack: () => setState(() => _stage = _LearningStage.moduleDetail),
+          onStart: _openSelectedTopicLesson,
         );
       case _LearningStage.pdfLesson:
         if (_selectedTopic == null) {
@@ -1003,12 +1032,13 @@ class _StudentShellState extends State<StudentShell> {
         }
         return _PdfLessonScreen(
           topic: _selectedTopic!,
-          onBack: () => setState(() => _stage = _LearningStage.moduleDetail),
+          onBack: () => setState(
+            () => _stage = _topicHasVideoContent(_selectedTopic!)
+                ? _LearningStage.videoLesson
+                : _LearningStage.topicIntro,
+          ),
           onStartQuiz: _selectedTopic!.quizQuestions.isNotEmpty
               ? _openSelectedTopicQuiz
-              : null,
-          onOpenVideo: _topicHasVideoContent(_selectedTopic!)
-              ? () => setState(() => _stage = _LearningStage.videoLesson)
               : null,
           onComplete: _completePdfLesson,
         );
@@ -1025,7 +1055,7 @@ class _StudentShellState extends State<StudentShell> {
         }
         return _VideoLessonScreen(
           topic: _selectedTopic!,
-          onBack: () => setState(() => _stage = _LearningStage.pdfLesson),
+          onBack: () => setState(() => _stage = _LearningStage.topicIntro),
           onComplete: _completeVideoLesson,
         );
       case _LearningStage.topicQuiz:
@@ -1040,13 +1070,14 @@ class _StudentShellState extends State<StudentShell> {
           );
         }
         return _TopicQuizScreen(
+          topicTitle: _selectedTopic!.title,
           questions: _selectedTopic!.quizQuestions,
           questionIndex: _quizQuestionIndex,
           selectedOption: _selectedOption,
           onSelected: (index) => setState(() => _selectedOption = index),
           onNext: _handleTopicQuizNext,
           onPrevious: _handleTopicQuizPrevious,
-          onBack: () => setState(() => _stage = _LearningStage.videoLesson),
+          onBack: () => setState(() => _stage = _LearningStage.pdfLesson),
         );
       case _LearningStage.quizResult:
         if (_selectedTopic == null) {
@@ -1062,6 +1093,8 @@ class _StudentShellState extends State<StudentShell> {
         return _QuizResultScreen(
           topic: _selectedTopic!,
           score: _topicScore,
+          answers: _topicAnswers,
+          canOpenFinalExam: _canOpenFinalExamFromTopicResult(),
           onContinue: _returnToModuleAfterQuiz,
           onFinalExam: () => setState(() => _stage = _LearningStage.finalIntro),
         );
@@ -1294,7 +1327,7 @@ class _StudentBottomNavState extends State<_StudentBottomNav> {
             filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
             child: Container(
               height: 76,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
               decoration: BoxDecoration(
                 color: navBg,
                 borderRadius: BorderRadius.circular(36),
@@ -1314,47 +1347,107 @@ class _StudentBottomNavState extends State<_StudentBottomNav> {
                   ),
                 ],
               ),
-              child: Row(
-                children: List.generate(widget.items.length, (index) {
-                  final item = widget.items[index];
-                  final isSelected = index == widget.selectedIndex;
-                  final inactiveColor = isDark
-                      ? const Color(0xFF94A3B8)
-                      : const Color(0xFF64748B);
-                  final activeColor = isDark
-                      ? Colors.white
-                      : const Color(0xFF6C4DFF);
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  const inactiveWidth = 38.0;
+                  final maxActiveWidth =
+                      constraints.maxWidth -
+                      inactiveWidth * (widget.items.length - 1);
 
-                  return Expanded(
-                    child: GestureDetector(
-                      onTap: () => widget.onTabChanged(index),
-                      behavior: HitTestBehavior.opaque,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isSelected ? item.activeIcon : item.icon,
-                            color: isSelected ? activeColor : inactiveColor,
-                            size: 24,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            item.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: isSelected
-                                  ? FontWeight.bold
-                                  : FontWeight.w500,
-                              color: isSelected ? activeColor : inactiveColor,
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: List.generate(widget.items.length, (index) {
+                      final item = widget.items[index];
+                      final isSelected = index == widget.selectedIndex;
+                      final inactiveColor = isDark
+                          ? const Color(0xFF94A3B8)
+                          : const Color(0xFF64748B);
+                      final activeColor = isDark
+                          ? Colors.white
+                          : const Color(0xFF6C4DFF);
+                      final desiredActiveWidth = math.min(
+                        126.0,
+                        math.max(94.0, item.label.length * 6.4 + 46),
+                      );
+                      final activeWidth = math.min(
+                        desiredActiveWidth,
+                        math.max(82.0, maxActiveWidth),
+                      );
+
+                      return Semantics(
+                        selected: isSelected,
+                        button: true,
+                        label: item.label,
+                        child: GestureDetector(
+                          onTap: () => widget.onTabChanged(index),
+                          behavior: HitTestBehavior.opaque,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 240),
+                            curve: Curves.easeOutCubic,
+                            width: isSelected ? activeWidth : inactiveWidth,
+                            height: 54,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isSelected ? 10 : 0,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                AnimatedScale(
+                                  scale: isSelected ? 1.12 : 1.0,
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOutBack,
+                                  child: Icon(
+                                    isSelected ? item.activeIcon : item.icon,
+                                    color: isSelected
+                                        ? activeColor
+                                        : inactiveColor,
+                                    size: isSelected ? 28 : 26,
+                                  ),
+                                ),
+                                AnimatedSize(
+                                  duration: const Duration(milliseconds: 220),
+                                  curve: Curves.easeOutCubic,
+                                  alignment: Alignment.centerLeft,
+                                  child: isSelected
+                                      ? Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 7,
+                                          ),
+                                          child: ConstrainedBox(
+                                            constraints: BoxConstraints(
+                                              maxWidth: math.max(
+                                                30.0,
+                                                activeWidth - 39,
+                                              ),
+                                            ),
+                                            child: Text(
+                                              item.label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 11.5,
+                                                height: 1,
+                                                fontWeight: FontWeight.w900,
+                                                color: activeColor,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                      : const SizedBox.shrink(),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    }),
                   );
-                }),
+                },
               ),
             ),
           ),
@@ -1557,7 +1650,7 @@ class _StudentScrollScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(20, 18, 20, 160.0 + bottomInset),
+      padding: EdgeInsets.fromLTRB(12, 16, 12, 160.0 + bottomInset),
       child: child,
     );
   }
@@ -1581,6 +1674,7 @@ class _MobileHeader extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final subColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final compact = MediaQuery.sizeOf(context).width < 380;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1607,9 +1701,11 @@ class _MobileHeader extends StatelessWidget {
             children: [
               Text(
                 title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: textColor,
-                  fontSize: 24,
+                  fontSize: compact ? 21 : 24,
                   fontWeight: FontWeight.bold,
                   height: 1.1,
                 ),
@@ -1638,6 +1734,7 @@ class _HomeDashboard extends StatelessWidget {
   const _HomeDashboard({
     required this.data,
     required this.onContinue,
+    required this.onCourses,
     required this.onProgress,
     required this.onQuizzes,
     required this.onBookmarks,
@@ -1649,6 +1746,7 @@ class _HomeDashboard extends StatelessWidget {
 
   final StudentDashboardData data;
   final VoidCallback onContinue;
+  final VoidCallback onCourses;
   final VoidCallback onProgress;
   final VoidCallback onQuizzes;
   final VoidCallback onBookmarks;
@@ -1660,46 +1758,70 @@ class _HomeDashboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final overallPercent = (data.overallProgress * 100).round();
+    final overallValue = data.overallProgress.clamp(0.0, 1.0).toDouble();
     final firstName = data.profile.firstName;
     final continueModule = data.continueModule;
     String t(String key) => studentText(_StudentLanguageScope.of(context), key);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final iconColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    final headerButtonBg = isDark
+        ? Colors.white.withValues(alpha: .08)
+        : AppColors.studentPrimary.withValues(alpha: .10);
+
+    Widget headerCircleButton({
+      required String tooltip,
+      required VoidCallback onPressed,
+      required IconData icon,
+      double iconSize = 28,
+    }) {
+      return Tooltip(
+        message: tooltip,
+        child: SizedBox.square(
+          dimension: 56,
+          child: Material(
+            color: headerButtonBg,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onPressed,
+              child: Icon(icon, color: iconColor, size: iconSize),
+            ),
+          ),
+        ),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header — space-between with menu and notification bell
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            IconButton(
+            headerCircleButton(
               tooltip: 'Profil va sozlamalar',
               onPressed: onMenu,
-              icon: const Icon(Icons.menu_rounded, size: 28),
-              color: iconColor,
+              icon: Icons.menu_rounded,
             ),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
+                headerCircleButton(
                   tooltip: 'Yangilash',
                   onPressed: () => unawaited(onRefresh()),
-                  icon: const Icon(Icons.refresh_rounded, size: 24),
-                  color: iconColor,
+                  icon: Icons.refresh_rounded,
+                  iconSize: 27,
                 ),
+                const SizedBox(width: 16),
                 Badge.count(
                   isLabelVisible: notificationCount > 0,
                   count: notificationCount,
-                  child: IconButton(
+                  child: headerCircleButton(
+                    tooltip: 'Bildirishnomalar',
                     onPressed: onNotifications,
-                    icon: const Icon(
-                      Icons.notifications_none_rounded,
-                      size: 28,
-                    ),
-                    color: iconColor,
+                    icon: Icons.notifications_none_rounded,
                   ),
                 ),
               ],
@@ -1707,108 +1829,250 @@ class _HomeDashboard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 24),
-        // Greeting
-        Text(
-          '${t('hello')}, $firstName! 👋',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w900,
-            fontSize: 28,
-            color: textColor,
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${t('hello')}, $firstName! 👋',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 27,
+                      color: textColor,
+                      height: 1.05,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    t('welcome_to'),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: .68)
+                          : const Color(0xFF64748B),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.white.withValues(alpha: .06)
+                    : Colors.white.withValues(alpha: .82),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: .1)
+                      : const Color(0xFFE2E8F0),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    '$overallPercent%',
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    t('progress'),
+                    style: TextStyle(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: .48)
+                          : const Color(0xFF64748B),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          t('welcome_to'),
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: isDark
-                ? Colors.white.withValues(alpha: .7)
-                : const Color(0xFF64748B),
-            fontSize: 15,
-          ),
-        ),
-        const SizedBox(height: 24),
-        // Hero Banner
+        const SizedBox(height: 22),
         _GlassCard(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(18),
           gradient: isDark
               ? const LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Color(0xFF13103D), Color(0xFF0B0D21)],
+                  colors: [Color(0xFF17123F), Color(0xFF080A1E)],
                 )
               : const LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Color(0xFFF3F2FF), Color(0xFFEBE9FF)],
+                  colors: [Color(0xFFF8F7FF), Color(0xFFEDEBFF)],
                 ),
           borderColor: isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : const Color(0xFF6C4DFF).withValues(alpha: 0.15),
-          child: Row(
+              ? Colors.white.withValues(alpha: 0.1)
+              : const Color(0xFF6C4DFF).withValues(alpha: 0.14),
+          child: Stack(
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      t('keep_learning_growing'),
-                      style: TextStyle(
-                        color: isDark ? Colors.white : const Color(0xFF1E1B4B),
-                        fontSize: 19,
-                        height: 1.25,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      t('journey_starts'),
-                      style: TextStyle(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: .7)
-                            : const Color(0xFF6C4DFF).withValues(alpha: .8),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    ElevatedButton.icon(
-                      onPressed: onContinue,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6C4DFF),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(100),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                      ),
-                      icon: Text(
-                        t('continue'),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      label: const Icon(Icons.arrow_forward_rounded, size: 16),
-                    ),
-                  ],
+              Positioned(
+                right: -18,
+                top: -24,
+                child: Container(
+                  width: 132,
+                  height: 132,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF6C4DFF).withValues(alpha: .08),
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Image.asset(
-                'assets/images/flask_3d.png',
-                width: 95,
-                height: 95,
-                fit: BoxFit.contain,
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(
+                              0xFF22C55E,
+                            ).withValues(alpha: .12),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            t('today_plan'),
+                            style: const TextStyle(
+                              color: Color(0xFF16A34A),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          t('keep_learning_growing'),
+                          style: TextStyle(
+                            color: isDark
+                                ? Colors.white
+                                : const Color(0xFF17133D),
+                            fontSize: 20,
+                            height: 1.14,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        Text(
+                          t('journey_starts'),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: .66)
+                                : const Color(0xFF5B4BC4),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(999),
+                                child: LinearProgressIndicator(
+                                  value: overallValue,
+                                  minHeight: 7,
+                                  backgroundColor: isDark
+                                      ? Colors.white.withValues(alpha: .1)
+                                      : Colors.white.withValues(alpha: .9),
+                                  valueColor:
+                                      const AlwaysStoppedAnimation<Color>(
+                                        Color(0xFF6C4DFF),
+                                      ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              '$overallPercent%',
+                              style: TextStyle(
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: .82)
+                                    : const Color(0xFF4338CA),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        ElevatedButton(
+                          onPressed: onContinue,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6C4DFF),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(100),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                t('continue'),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              const Icon(Icons.arrow_forward_rounded, size: 16),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 104,
+                    height: 112,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: .06)
+                          : Colors.white.withValues(alpha: .74),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: isDark ? .1 : .9),
+                      ),
+                    ),
+                    child: Image.asset(
+                      'assets/images/flask_3d.png',
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
-        const SizedBox(height: 28),
-        // Quick Access
+        const SizedBox(height: 30),
         Text(
           t('quick_access'),
           style: TextStyle(
@@ -1819,31 +2083,41 @@ class _HomeDashboard extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            _QuickAccessItem(
-              icon: Icons.school_rounded,
-              label: t('courses'),
-              color: const Color(0xFF6C4DFF),
-              onTap: onContinue,
+            Expanded(
+              child: _QuickAccessItem(
+                icon: Icons.school_rounded,
+                label: t('courses'),
+                color: const Color(0xFF6C4DFF),
+                onTap: onCourses,
+              ),
             ),
-            _QuickAccessItem(
-              icon: Icons.bar_chart_rounded,
-              label: t('my_progress'),
-              color: const Color(0xFF10B981),
-              onTap: onProgress,
+            const SizedBox(width: 10),
+            Expanded(
+              child: _QuickAccessItem(
+                icon: Icons.bar_chart_rounded,
+                label: t('my_progress'),
+                color: const Color(0xFF10B981),
+                onTap: onProgress,
+              ),
             ),
-            _QuickAccessItem(
-              icon: Icons.help_outline_rounded,
-              label: t('quizzes'),
-              color: const Color(0xFF3B82F6),
-              onTap: onQuizzes,
+            const SizedBox(width: 10),
+            Expanded(
+              child: _QuickAccessItem(
+                icon: Icons.help_outline_rounded,
+                label: t('quizzes'),
+                color: const Color(0xFF3B82F6),
+                onTap: onQuizzes,
+              ),
             ),
-            _QuickAccessItem(
-              icon: Icons.bookmark_rounded,
-              label: t('bookmarks'),
-              color: const Color(0xFFF59E0B),
-              onTap: onBookmarks,
+            const SizedBox(width: 10),
+            Expanded(
+              child: _QuickAccessItem(
+                icon: Icons.bookmark_rounded,
+                label: t('bookmarks'),
+                color: const Color(0xFFF59E0B),
+                onTap: onBookmarks,
+              ),
             ),
           ],
         ),
@@ -2036,32 +2310,57 @@ class _QuickAccessItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: isDark ? .15 : .1),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: color.withValues(alpha: .1)),
-            ),
-            child: Icon(icon, color: color, size: 28),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: SizedBox(
+          width: double.infinity,
+          height: 98,
+          child: Column(
+            children: [
+              Container(
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: isDark ? .16 : .1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: color.withValues(alpha: .16)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: isDark ? .08 : .06),
+                      blurRadius: 14,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Icon(icon, color: color, size: 27),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 32,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: .9)
+                          : const Color(0xFF0F172A),
+                      fontSize: 11,
+                      height: 1.1,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: isDark
-                  ? Colors.white.withValues(alpha: .9)
-                  : const Color(0xFF0F172A),
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -2084,6 +2383,9 @@ class _ContinueCardCompact extends StatelessWidget {
     final title = m?.title ?? 'Kardiologiya asoslari';
     final percent = m != null ? (m.progress * 100).round() : overallPercent;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final category = (m?.category.trim().isNotEmpty ?? false)
+        ? m!.category
+        : 'Kardiologiya';
 
     final topicCount = m?.topics.length ?? 8;
     int totalMinutes = 0;
@@ -2099,22 +2401,37 @@ class _ContinueCardCompact extends StatelessWidget {
 
     return _GlassCard(
       onTap: onTap,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       child: Row(
         children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
-            ),
-            padding: const EdgeInsets.all(4),
-            child: Image.asset(
-              'assets/images/heart_3d.png',
-              fit: BoxFit.contain,
-            ),
-          ),
+          m?.coverUrl.trim().isNotEmpty == true
+              ? _CourseCoverBox(
+                  imageUrl: m!.coverUrl,
+                  icon: Icons.biotech_rounded,
+                  color: const Color(0xFF6C4DFF),
+                  size: 82,
+                  radius: 18,
+                )
+              : Container(
+                  width: 82,
+                  height: 82,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    color: isDark
+                        ? const Color(0xFF1E293B)
+                        : const Color(0xFFF1F5F9),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withValues(alpha: .08)
+                          : const Color(0xFFE2E8F0),
+                    ),
+                  ),
+                  padding: const EdgeInsets.all(5),
+                  child: Image.asset(
+                    'assets/images/heart_3d.png',
+                    fit: BoxFit.contain,
+                  ),
+                ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
@@ -2122,21 +2439,25 @@ class _ContinueCardCompact extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF6C4DFF).withValues(alpha: .1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        'Kardiologiya',
-                        style: TextStyle(
-                          color: Color(0xFF6C4DFF),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6C4DFF).withValues(alpha: .1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          category,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF6C4DFF),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
                     ),
@@ -2145,12 +2466,13 @@ class _ContinueCardCompact extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   title,
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: isDark ? Colors.white : const Color(0xFF0F172A),
                     fontSize: 15,
                     fontWeight: FontWeight.w800,
+                    height: 1.16,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -2303,237 +2625,322 @@ class _CompactCourseCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final percent = (module.progress * 100).round();
+    final progress = module.progress.clamp(0.0, 1.0).toDouble();
+    final percent = (progress * 100).round();
+    final totalLessons = math.max(1, module.topics.length);
+    final completedLessons = math.min(
+      module.topics
+          .where((topic) => topic.status == TopicStatus.completed)
+          .length,
+      totalLessons,
+    );
 
-    // Choose category color and icon
-    final Color categoryColor;
-    final IconData categoryIcon;
+    final Color accent;
     switch (module.category) {
       case 'Kardiologiya':
-        categoryColor = const Color(0xFFFF2D55); // Crimson Red
-        categoryIcon = Icons.favorite_rounded;
+        accent = const Color(0xFFFF2D55);
         break;
       case 'Biokimyo':
-        categoryColor = const Color(0xFFFF9500); // Orange
-        categoryIcon = Icons.science_rounded;
+        accent = const Color(0xFF00B894);
         break;
       case 'Gemotologiya':
-        categoryColor = const Color(0xFFAF52DE); // Purple
-        categoryIcon = Icons.bloodtype_rounded;
+        accent = const Color(0xFF8B5CF6);
         break;
       case 'Mikrobiologiya':
-        categoryColor = const Color(0xFF34C759); // Green
-        categoryIcon = Icons.bug_report_rounded;
+        accent = const Color(0xFF34C759);
         break;
       default:
-        categoryColor = const Color(0xFF6C4DFF); // Labproof Purple
-        categoryIcon = Icons.school_rounded;
+        accent = const Color(0xFF6C4DFF);
     }
 
-    final String studentText = module.studentCount >= 1000
-        ? '${(module.studentCount / 1000).toStringAsFixed(1)}k o\'quvchi'
-        : '${module.studentCount} o\'quvchi';
-
-    final cardBg = isDark ? const Color(0xFF0F172A) : Colors.white;
-    final borderCol = isDark
-        ? const Color(0xFF1E293B)
-        : const Color(0xFFE2E8F0);
-    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final mutedTextColor = isDark
-        ? const Color(0xFF94A3B8)
-        : const Color(0xFF64748B);
+    final visualAsset = _moduleVisualAsset(module);
+    final subtitle = module.category.trim().isNotEmpty
+        ? module.category
+        : 'Boshlang‘ich kurs';
+    final statusLabel = module.isPassed
+        ? 'Yakunlandi'
+        : module.isUnlocked
+        ? 'Davom etmoqda'
+        : 'Yopiq';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12),
+      height: 112,
       decoration: BoxDecoration(
-        color: cardBg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: borderCol, width: 1.5),
+        borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.02),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: accent.withValues(alpha: 0.16),
+            blurRadius: 18,
+            offset: const Offset(0, 9),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         child: Material(
           color: Colors.transparent,
           child: InkWell(
             onTap: module.isUnlocked ? onTap : null,
-            borderRadius: BorderRadius.circular(20),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Left side 3D/glass icon block
-                  _CourseCoverBox(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: _ModuleCoverBackground(
                     imageUrl: module.coverUrl,
-                    icon: categoryIcon,
-                    color: module.isUnlocked
-                        ? categoryColor
-                        : mutedTextColor.withValues(alpha: 0.5),
-                    size: 76,
-                    radius: 16,
+                    assetPath: visualAsset,
+                    color: accent,
                   ),
-                  const SizedBox(width: 16),
-                  // Right side details block
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Category tag and bookmark icon
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: categoryColor.withValues(alpha: 0.06),
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                              child: Text(
-                                module.category,
-                                style: TextStyle(
-                                  color: categoryColor,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Icon(
-                              Icons.bookmark_border_rounded,
-                              size: 18,
-                              color: isDark ? Colors.white30 : Colors.black26,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        // Title
-                        Text(
-                          module.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: module.isUnlocked
-                                ? textColor
-                                : textColor.withValues(alpha: 0.5),
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            height: 1.25,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        // Lesson & Student Stats Row
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.menu_book_rounded,
-                              size: 13,
-                              color: mutedTextColor,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${module.topics.length} ta dars',
-                              style: TextStyle(
-                                color: mutedTextColor,
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Icon(
-                              Icons.people_outline_rounded,
-                              size: 13,
-                              color: mutedTextColor,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              studentText,
-                              style: TextStyle(
-                                color: mutedTextColor,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (module.isUnlocked) ...[
-                          const SizedBox(height: 12),
-                          // Progress Row
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  height: 5,
-                                  decoration: BoxDecoration(
-                                    color: isDark
-                                        ? const Color(0xFF1E293B)
-                                        : const Color(0xFFF1F5F9),
-                                    borderRadius: BorderRadius.circular(3),
-                                  ),
-                                  child: Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: FractionallySizedBox(
-                                      widthFactor: module.progress,
-                                      child: Container(
-                                        height: 5,
-                                        decoration: BoxDecoration(
-                                          color: categoryColor,
-                                          borderRadius: BorderRadius.circular(
-                                            3,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '$percent%',
-                                style: TextStyle(
-                                  color: textColor,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ] else ...[
-                          const SizedBox(height: 12),
-                          // Locked text
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.lock_outline_rounded,
-                                size: 13,
-                                color: mutedTextColor.withValues(alpha: 0.6),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Yopiq modul',
-                                style: TextStyle(
-                                  color: mutedTextColor.withValues(alpha: 0.6),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
+                ),
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          Colors.black.withValues(alpha: .82),
+                          Colors.black.withValues(alpha: .54),
+                          Colors.black.withValues(alpha: .22),
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ],
+                ),
+                if (!module.isUnlocked)
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: .38),
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 13, 14, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  module.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w900,
+                                    height: 1.1,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  subtitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: .84),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (!module.isUnlocked)
+                            Icon(
+                              Icons.lock_rounded,
+                              color: Colors.white.withValues(alpha: .9),
+                              size: 18,
+                            ),
+                        ],
+                      ),
+                      const Spacer(),
+                      Text(
+                        'Jami progress',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: .86),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: LinearProgressIndicator(
+                                value: progress,
+                                minHeight: 4,
+                                backgroundColor: Colors.white.withValues(
+                                  alpha: .24,
+                                ),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  accent,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            '$percent%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Text(
+                            '$completedLessons / $totalLessons dars',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            statusLabel,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .82),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _moduleVisualAsset(AcademyModule module) {
+  final source = '${module.category} ${module.title} ${module.description}'
+      .toLowerCase();
+  if (source.contains('kardio') || source.contains('yurak')) {
+    return 'assets/images/heart_3d.png';
+  }
+  if (source.contains('bio') || source.contains('kimyo')) {
+    return 'assets/images/flask_3d.png';
+  }
+  if (source.contains('gem') || source.contains('qon')) {
+    return 'assets/images/onboarding_2.png';
+  }
+  return 'assets/images/onboarding_1.png';
+}
+
+class _ModuleCoverBackground extends StatelessWidget {
+  const _ModuleCoverBackground({
+    required this.imageUrl,
+    required this.assetPath,
+    required this.color,
+  });
+
+  final String imageUrl;
+  final String assetPath;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmedUrl = imageUrl.trim();
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: .95),
+            const Color(0xFF111827),
+            const Color(0xFF020617),
+          ],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: const Alignment(.75, -.2),
+                  radius: 1.12,
+                  colors: [
+                    Colors.white.withValues(alpha: .22),
+                    Colors.transparent,
+                  ],
+                ),
               ),
             ),
           ),
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: double.infinity,
+            child: trimmedUrl.isEmpty
+                ? _AssetCourseVisual(assetPath: assetPath)
+                : Image.network(
+                    trimmedUrl,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
+                    errorBuilder: (_, __, ___) =>
+                        _AssetCourseVisual(assetPath: assetPath),
+                  ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    const Color(0xFF020617).withValues(alpha: .64),
+                    color.withValues(alpha: .14),
+                    const Color(0xFF020617).withValues(alpha: .34),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(child: CustomPaint(painter: _LabTilePainter(color))),
+        ],
+      ),
+    );
+  }
+}
+
+class _AssetCourseVisual extends StatelessWidget {
+  const _AssetCourseVisual({required this.assetPath});
+
+  final String assetPath;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 130),
+        child: Image.asset(
+          assetPath,
+          fit: BoxFit.contain,
+          alignment: Alignment.centerRight,
         ),
       ),
     );
@@ -2634,18 +3041,16 @@ class _ModulesListScreen extends StatefulWidget {
     required this.filter,
     required this.onRefresh,
     required this.onFilterChanged,
+    required this.onBackHome,
     required this.onOpenModule,
-    required this.notificationCount,
-    required this.onNotifications,
   });
 
   final List<AcademyModule> modules;
   final _ModuleFilter filter;
   final Future<void> Function() onRefresh;
   final ValueChanged<_ModuleFilter> onFilterChanged;
+  final VoidCallback onBackHome;
   final ValueChanged<AcademyModule> onOpenModule;
-  final int notificationCount;
-  final VoidCallback onNotifications;
 
   @override
   State<_ModulesListScreen> createState() => _ModulesListScreenState();
@@ -2653,8 +3058,6 @@ class _ModulesListScreen extends StatefulWidget {
 
 class _ModulesListScreenState extends State<_ModulesListScreen> {
   String _searchQuery = '';
-  String _selectedCategory = 'Barchasi';
-  bool _showFilters = false;
   final TextEditingController _searchController = TextEditingController();
 
   @override
@@ -2680,12 +3083,7 @@ class _ModulesListScreenState extends State<_ModulesListScreen> {
       }
     }).toList();
 
-    final categoryFiltered = statusFiltered.where((module) {
-      if (_selectedCategory == 'Barchasi') return true;
-      return module.category == _selectedCategory;
-    }).toList();
-
-    final filteredModules = categoryFiltered.where((module) {
+    final filteredModules = statusFiltered.where((module) {
       if (_searchQuery.isEmpty) return true;
       final q = _searchQuery.toLowerCase();
       return module.title.toLowerCase().contains(q) ||
@@ -2693,200 +3091,165 @@ class _ModulesListScreenState extends State<_ModulesListScreen> {
           module.category.toLowerCase().contains(q);
     }).toList();
 
-    final categories = [
-      'Barchasi',
-      'Kardiologiya',
-      'Biokimyo',
-      'Gemotologiya',
-      'Mikrobiologiya',
+    const statusTabs = [
+      (_ModuleFilter.all, 'Barchasi'),
+      (_ModuleFilter.open, 'Davom etilmoqda'),
+      (_ModuleFilter.completed, 'Yakunlangan'),
     ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _MobileHeader(
-          title: 'Kurslar',
-          subtitle: 'Bilimingizni yangi bosqichga olib chiqing',
-          trailing: Badge.count(
-            isLabelVisible: widget.notificationCount > 0,
-            count: widget.notificationCount,
-            child: IconButton(
-              onPressed: widget.onNotifications,
-              icon: Icon(
-                Icons.notifications_none_rounded,
-                color: isDark ? Colors.white : const Color(0xFF0F172A),
-                size: 28,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
-        // Search & Filter Row
         Row(
           children: [
+            IconButton(
+              tooltip: 'Bosh sahifaga qaytish',
+              onPressed: widget.onBackHome,
+              icon: Icon(
+                Icons.arrow_back_rounded,
+                color: isDark ? Colors.white : const Color(0xFF0F172A),
+              ),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                minimumSize: const Size(36, 36),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+            const SizedBox(width: 2),
             Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF0F172A) : Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: isDark
-                        ? const Color(0xFF1E293B)
-                        : const Color(0xFFE2E8F0),
-                    width: 1.5,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: isDark ? 0.2 : 0.02,
-                      ),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  onChanged: (val) {
-                    setState(() {
-                      _searchQuery = val;
-                    });
-                  },
-                  style: TextStyle(
-                    color: isDark ? Colors.white : const Color(0xFF0F172A),
-                    fontSize: 15,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Kurs yoki darslarni qidirish...',
-                    hintStyle: TextStyle(
-                      color: isDark
-                          ? const Color(0xFF64748B)
-                          : const Color(0xFF94A3B8),
-                    ),
-                    prefixIcon: Icon(
-                      Icons.search_rounded,
-                      color: isDark
-                          ? const Color(0xFF64748B)
-                          : const Color(0xFF94A3B8),
-                    ),
-                    suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: Icon(
-                              Icons.clear_rounded,
-                              color: isDark
-                                  ? Colors.white70
-                                  : const Color(0xFF64748B),
-                            ),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {
-                                _searchQuery = '';
-                              });
-                            },
-                          )
-                        : null,
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                  ),
+              child: Text(
+                'Kurslar',
+                style: TextStyle(
+                  color: isDark ? Colors.white : const Color(0xFF0F172A),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
             ),
-            const SizedBox(width: 12),
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  _showFilters = !_showFilters;
-                });
+            IconButton(
+              tooltip: 'Saqlangan kurslar',
+              onPressed: () {
+                ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                  const SnackBar(content: Text('Saqlangan kurslar tez kunda.')),
+                );
               },
-              child: Container(
-                height: 52,
-                width: 52,
-                decoration: BoxDecoration(
-                  color: _showFilters
-                      ? const Color(0xFF6C4DFF)
-                      : (isDark ? const Color(0xFF0F172A) : Colors.white),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: _showFilters
-                        ? const Color(0xFF6C4DFF)
-                        : (isDark
-                              ? const Color(0xFF1E293B)
-                              : const Color(0xFFE2E8F0)),
-                    width: 1.5,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: isDark ? 0.2 : 0.02,
-                      ),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Icon(
-                    Icons.tune_rounded,
-                    color: _showFilters
-                        ? Colors.white
-                        : (isDark ? Colors.white70 : const Color(0xFF64748B)),
-                    size: 22,
-                  ),
-                ),
+              icon: Icon(
+                Icons.bookmark_border_rounded,
+                color: isDark ? Colors.white : const Color(0xFF0F172A),
+              ),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                minimumSize: const Size(36, 36),
+                padding: EdgeInsets.zero,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 18),
-        // Horizontal Categories List
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF3F6FB),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: TextField(
+            controller: _searchController,
+            onChanged: (val) {
+              setState(() {
+                _searchQuery = val;
+              });
+            },
+            style: TextStyle(
+              color: isDark ? Colors.white : const Color(0xFF0F172A),
+              fontSize: 15,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Kurs izlash',
+              hintStyle: TextStyle(
+                color: isDark
+                    ? const Color(0xFF64748B)
+                    : const Color(0xFF94A3B8),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                color: isDark
+                    ? const Color(0xFF64748B)
+                    : const Color(0xFF94A3B8),
+                size: 19,
+              ),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 38,
+                minHeight: 38,
+              ),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: Icon(
+                        Icons.clear_rounded,
+                        color: isDark
+                            ? Colors.white70
+                            : const Color(0xFF64748B),
+                      ),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() {
+                          _searchQuery = '';
+                        });
+                      },
+                    )
+                  : null,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
           child: Row(
-            children: categories.map((cat) {
-              final isSelected = _selectedCategory == cat;
+            children: statusTabs.map((item) {
+              final isSelected = widget.filter == item.$1;
               return Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _selectedCategory = cat;
-                    });
-                  },
+                  onTap: () => widget.onFilterChanged(item.$1),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
+                      horizontal: 12,
+                      vertical: 7,
                     ),
                     decoration: BoxDecoration(
                       color: isSelected
                           ? const Color(0xFF6C4DFF)
                           : (isDark
-                                ? const Color(0xFF1E293B)
-                                : const Color(0xFFF1F5F9)),
-                      borderRadius: BorderRadius.circular(30),
+                                ? const Color(0xFF0F172A)
+                                : const Color(0xFFF5F7FC)),
+                      borderRadius: BorderRadius.circular(8),
                       border: Border.all(
                         color: isSelected
                             ? const Color(0xFF6C4DFF)
-                            : Colors.transparent,
+                            : (isDark
+                                  ? const Color(0xFF1E293B)
+                                  : const Color(0xFFE9EEF8)),
                         width: 1,
                       ),
                     ),
                     child: Text(
-                      cat,
+                      item.$2,
                       style: TextStyle(
                         color: isSelected
                             ? Colors.white
                             : (isDark
                                   ? const Color(0xFF94A3B8)
                                   : const Color(0xFF64748B)),
+                        fontSize: 11,
                         fontWeight: isSelected
-                            ? FontWeight.bold
-                            : FontWeight.w500,
-                        fontSize: 13,
+                            ? FontWeight.w900
+                            : FontWeight.w700,
                       ),
                     ),
                   ),
@@ -2895,70 +3258,7 @@ class _ModulesListScreenState extends State<_ModulesListScreen> {
             }).toList(),
           ),
         ),
-        if (_showFilters) ...[
-          const SizedBox(height: 18),
-          // Filter sub-tabs
-          Row(
-            children: [
-              for (final item in const [
-                (_ModuleFilter.all, 'Barchasi'),
-                (_ModuleFilter.open, 'Aktiv'),
-                (_ModuleFilter.completed, 'Tugallangan'),
-                (_ModuleFilter.locked, 'Yopiq'),
-              ])
-                Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal:
-                          item.$1 == _ModuleFilter.all ||
-                              item.$1 == _ModuleFilter.locked
-                          ? 2.0
-                          : 4.0,
-                    ),
-                    child: InkWell(
-                      onTap: () => widget.onFilterChanged(item.$1),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
-                          color: widget.filter == item.$1
-                              ? const Color(0xFF6C4DFF).withValues(alpha: 0.12)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: widget.filter == item.$1
-                                ? const Color(0xFF6C4DFF).withValues(alpha: 0.3)
-                                : Colors.transparent,
-                            width: 1,
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            item.$2,
-                            style: TextStyle(
-                              color: widget.filter == item.$1
-                                  ? (isDark
-                                        ? Colors.white
-                                        : const Color(0xFF6C4DFF))
-                                  : (isDark
-                                        ? const Color(0xFF94A3B8)
-                                        : const Color(0xFF64748B)),
-                              fontSize: 12,
-                              fontWeight: widget.filter == item.$1
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 20),
-        // Modules List View
+        const SizedBox(height: 14),
         if (widget.modules.isEmpty)
           _EmptyStateCard(
             icon: Icons.library_books_outlined,
@@ -2994,97 +3294,11 @@ class _ModulesListScreenState extends State<_ModulesListScreen> {
   }
 }
 
-class _JourneyItem {
-  const _JourneyItem(this.label, this.icon);
-
-  final String label;
-  final IconData icon;
-}
-
-class _JourneyNoteCard extends StatelessWidget {
-  const _JourneyNoteCard({
-    required this.title,
-    required this.subtitle,
-    required this.accent,
-    required this.items,
-  });
-
-  final String title;
-  final String subtitle;
-  final Color accent;
-  final List<_JourneyItem> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      color: accent.withValues(alpha: .06),
-      borderColor: accent.withValues(alpha: .14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IconBadge(icon: Icons.route_rounded, color: accent, size: 40),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final item in items)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: accent.withValues(alpha: .12)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(item.icon, size: 14, color: accent),
-                      const SizedBox(width: 6),
-                      Text(
-                        item.label,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ModuleDetailScreen extends StatelessWidget {
   const _ModuleDetailScreen({
     required this.module,
     required this.selectedTopic,
+    required this.canOpenFinalExam,
     required this.onBack,
     required this.onOpenTopic,
     required this.onFinalExam,
@@ -3092,6 +3306,7 @@ class _ModuleDetailScreen extends StatelessWidget {
 
   final AcademyModule module;
   final TopicLesson? selectedTopic;
+  final bool canOpenFinalExam;
   final VoidCallback onBack;
   final ValueChanged<TopicLesson> onOpenTopic;
   final VoidCallback onFinalExam;
@@ -3101,39 +3316,33 @@ class _ModuleDetailScreen extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final percent = (module.progress * 100).round();
 
-    // Determine category accent color and icon
+    // Determine category accent color
     final Color categoryColor;
-    final IconData categoryIcon;
     switch (module.category) {
       case 'Kardiologiya':
         categoryColor = const Color(0xFFFF2D55); // Crimson Red
-        categoryIcon = Icons.favorite_rounded;
         break;
       case 'Biokimyo':
         categoryColor = const Color(0xFFFF9500); // Orange
-        categoryIcon = Icons.science_rounded;
         break;
       case 'Gemotologiya':
         categoryColor = const Color(0xFFAF52DE); // Purple
-        categoryIcon = Icons.bloodtype_rounded;
         break;
       case 'Mikrobiologiya':
         categoryColor = const Color(0xFF34C759); // Green
-        categoryIcon = Icons.bug_report_rounded;
         break;
       default:
         categoryColor = const Color(0xFF6C4DFF); // Labproof Purple
-        categoryIcon = Icons.school_rounded;
     }
 
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final borderCol = isDark
-        ? const Color(0xFF1E293B)
-        : const Color(0xFFE2E8F0);
-    final cardBg = isDark ? const Color(0xFF0F172A) : Colors.white;
     final mutedTextColor = isDark
         ? const Color(0xFF94A3B8)
         : const Color(0xFF64748B);
+    final visualAsset = _moduleVisualAsset(module);
+    final description = module.description.isEmpty
+        ? 'Ushbu modul orqali tegishli yo‘nalish bo‘yicha nazariy va amaliy ko‘nikmalarni o‘rganasiz.'
+        : module.description;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3187,113 +3396,155 @@ class _ModuleDetailScreen extends StatelessWidget {
         ),
         const SizedBox(height: 24),
 
-        // Gorgeous Premium Hero Header Card
         Container(
+          height: 194,
           width: double.infinity,
           decoration: BoxDecoration(
-            color: cardBg,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: borderCol, width: 1.5),
+            borderRadius: BorderRadius.circular(22),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.02),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
+                color: categoryColor.withValues(alpha: isDark ? .24 : .16),
+                blurRadius: 24,
+                offset: const Offset(0, 14),
               ),
             ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Stack(
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _CourseCoverBox(
-                      imageUrl: module.coverUrl,
-                      icon: categoryIcon,
-                      color: categoryColor,
-                      size: 64,
-                      radius: 14,
+                Positioned.fill(
+                  child: _ModuleCoverBackground(
+                    imageUrl: module.coverUrl,
+                    assetPath: visualAsset,
+                    color: categoryColor,
+                  ),
+                ),
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: .18),
+                          Colors.black.withValues(alpha: .82),
+                        ],
+                      ),
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 17, 18, 15),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Text(
-                            module.title,
-                            style: TextStyle(
-                              color: textColor,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              height: 1.25,
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: .18),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: .2),
+                              ),
+                            ),
+                            child: Text(
+                              module.category.isEmpty
+                                  ? 'BARCHASI'
+                                  : module.category.toUpperCase(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: .4,
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            module.description.isEmpty
-                                ? 'Ushbu modul orqali tegishli yo\'nalish bo\'yicha nazariy va amaliy ko\'nikmalarni o\'rganasiz.'
-                                : module.description,
-                            style: TextStyle(
-                              color: mutedTextColor,
-                              fontSize: 12,
-                              height: 1.35,
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: .18),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              '${module.topics.length} dars',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w900,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Divider(color: borderCol, height: 1),
-                const SizedBox(height: 16),
-
-                // Progress Bar Inside Hero
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Tugallanish ko‘rsatkichi',
-                      style: TextStyle(
-                        color: mutedTextColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    Text(
-                      '$percent%',
-                      style: TextStyle(
-                        color: categoryColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF1E293B)
-                        : const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: FractionallySizedBox(
-                      widthFactor: module.progress,
-                      child: Container(
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: categoryColor,
-                          borderRadius: BorderRadius.circular(3),
+                      const Spacer(),
+                      Text(
+                        module.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
+                          height: 1.12,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 7),
+                      Text(
+                        description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: .82),
+                          fontSize: 12,
+                          height: 1.28,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 13),
+                      Row(
+                        children: [
+                          Text(
+                            'Tugallanish ko‘rsatkichi',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .86),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '$percent%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 7),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          value: module.progress.clamp(0.0, 1.0).toDouble(),
+                          minHeight: 6,
+                          backgroundColor: Colors.white.withValues(alpha: .22),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            categoryColor,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -3352,6 +3603,8 @@ class _ModuleDetailScreen extends StatelessWidget {
                 topic: topic,
                 index: index + 1,
                 categoryColor: categoryColor,
+                moduleCoverUrl: module.coverUrl,
+                moduleVisualAsset: visualAsset,
                 onTap: () => onOpenTopic(topic),
               );
             },
@@ -3359,7 +3612,7 @@ class _ModuleDetailScreen extends StatelessWidget {
 
         const SizedBox(height: 24),
         // Final exam button if module is completed or near completion
-        if (module.progress >= 0.75) ...[
+        if (canOpenFinalExam) ...[
           Container(
             width: double.infinity,
             decoration: BoxDecoration(
@@ -3406,180 +3659,194 @@ class _TopicTile extends StatelessWidget {
     required this.topic,
     required this.index,
     required this.categoryColor,
+    required this.moduleCoverUrl,
+    required this.moduleVisualAsset,
     required this.onTap,
   });
 
   final TopicLesson topic;
   final int index;
   final Color categoryColor;
+  final String moduleCoverUrl;
+  final String moduleVisualAsset;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final locked = topic.status == TopicStatus.locked;
     final completed = topic.status == TopicStatus.completed;
-
-    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final borderCol = isDark
-        ? const Color(0xFF1E293B)
-        : const Color(0xFFE2E8F0);
-    final cardBg = isDark ? const Color(0xFF0F172A) : Colors.white;
-    final mutedTextColor = isDark
-        ? const Color(0xFF94A3B8)
-        : const Color(0xFF64748B);
-
     final Color accent = completed
         ? AppColors.successGreen
         : locked
-        ? mutedTextColor.withOpacity(0.4)
+        ? const Color(0xFF94A3B8)
         : categoryColor;
+    final imageUrl = topic.coverUrl.trim().isNotEmpty
+        ? topic.coverUrl
+        : moduleCoverUrl;
+    final statusIcon = completed
+        ? Icons.check_rounded
+        : locked
+        ? Icons.lock_rounded
+        : Icons.play_arrow_rounded;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Container(
+        height: 126,
         decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderCol, width: 1.5),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.02),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+              color: accent.withValues(alpha: locked ? .07 : .14),
+              blurRadius: 18,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: locked ? null : onTap,
-              borderRadius: BorderRadius.circular(16),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    // Topic cover / status indicator
-                    if (topic.coverUrl.trim().isNotEmpty)
-                      _CourseCoverBox(
-                        imageUrl: topic.coverUrl,
-                        icon: locked
-                            ? Icons.lock_rounded
-                            : completed
-                            ? Icons.check_rounded
-                            : Icons.play_arrow_rounded,
-                        color: accent,
-                        size: 44,
-                        radius: 14,
-                      )
-                    else
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: completed
-                              ? AppColors.successGreen.withValues(alpha: 0.08)
-                              : locked
-                              ? (isDark
-                                    ? const Color(0xFF1E293B)
-                                    : const Color(0xFFF1F5F9))
-                              : categoryColor.withValues(alpha: 0.08),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: completed
-                                ? AppColors.successGreen.withValues(alpha: 0.18)
-                                : locked
-                                ? Colors.transparent
-                                : categoryColor.withValues(alpha: 0.18),
-                            width: 1,
-                          ),
-                        ),
-                        child: Center(
-                          child: completed
-                              ? const Icon(
-                                  Icons.check_rounded,
-                                  color: AppColors.successGreen,
-                                  size: 18,
-                                )
-                              : locked
-                              ? Icon(
-                                  Icons.lock_rounded,
-                                  color: mutedTextColor.withValues(alpha: 0.5),
-                                  size: 16,
-                                )
-                              : Text(
-                                  index.toString().padLeft(2, '0'),
-                                  style: TextStyle(
-                                    color: categoryColor,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    const SizedBox(width: 16),
-                    // Topic details
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            topic.title,
-                            style: TextStyle(
-                              color: locked
-                                  ? textColor.withValues(alpha: 0.5)
-                                  : textColor,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            topic.summary.isEmpty
-                                ? 'Mavzu bo‘yicha dars va amaliy topshiriqlar.'
-                                : topic.summary,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: mutedTextColor,
-                              fontSize: 12,
-                              height: 1.3,
-                            ),
-                          ),
-                        ],
+              onTap: locked && !topic.requiresSubscription ? null : onTap,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: _ModuleCoverBackground(
+                      imageUrl: imageUrl,
+                      assetPath: moduleVisualAsset,
+                      color: accent,
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: locked
+                            ? Colors.black.withValues(alpha: .58)
+                            : Colors.black.withValues(alpha: .22),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    // Right status action label / score
-                    if (completed)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                  ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Colors.black.withValues(alpha: .78),
+                            Colors.black.withValues(alpha: .52),
+                            Colors.black.withValues(alpha: .26),
+                          ],
                         ),
-                        decoration: BoxDecoration(
-                          color: AppColors.successGreen.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${(topic.quizScore * 100).round()}% test',
-                          style: const TextStyle(
-                            color: AppColors.successGreen,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: completed
+                                ? AppColors.successGreen.withValues(alpha: .18)
+                                : Colors.white.withValues(alpha: .16),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: completed
+                                  ? AppColors.successGreen.withValues(
+                                      alpha: .36,
+                                    )
+                                  : Colors.white.withValues(alpha: .2),
+                            ),
+                          ),
+                          child: Icon(
+                            statusIcon,
+                            color: completed
+                                ? AppColors.successGreen
+                                : Colors.white.withValues(
+                                    alpha: locked ? .58 : .95,
+                                  ),
+                            size: 24,
                           ),
                         ),
-                      )
-                    else if (!locked)
-                      Icon(
-                        Icons.play_circle_filled_rounded,
-                        color: categoryColor,
-                        size: 24,
-                      ),
-                  ],
-                ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${index.toString().padLeft(2, '0')}  ${topic.title}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(
+                                    alpha: locked ? .56 : 1,
+                                  ),
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.16,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                topic.summary.isEmpty
+                                    ? 'Mavzu bo‘yicha dars va amaliy topshiriqlar.'
+                                    : topic.summary,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(
+                                    alpha: locked ? .46 : .76,
+                                  ),
+                                  fontSize: 12,
+                                  height: 1.25,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        if (completed)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.successGreen.withValues(
+                                alpha: .16,
+                              ),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: AppColors.successGreen.withValues(
+                                  alpha: .22,
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              '${(topic.quizScore * 100).round()}% test',
+                              style: const TextStyle(
+                                color: AppColors.successGreen,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          )
+                        else if (!locked)
+                          Icon(
+                            Icons.play_circle_fill_rounded,
+                            color: Colors.white.withValues(alpha: .9),
+                            size: 26,
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -3589,23 +3856,481 @@ class _TopicTile extends StatelessWidget {
   }
 }
 
-class _PdfLessonScreen extends StatelessWidget {
+class _TopicIntroScreen extends StatelessWidget {
+  const _TopicIntroScreen({
+    required this.module,
+    required this.topic,
+    required this.onBack,
+    required this.onStart,
+  });
+
+  final AcademyModule module;
+  final TopicLesson topic;
+  final VoidCallback onBack;
+  final VoidCallback onStart;
+
+  int get _topicNumber {
+    final index = module.topics.indexWhere((item) => item.id == topic.id);
+    return index >= 0 ? index + 1 : math.max(1, module.order);
+  }
+
+  int get _lessonSectionCount {
+    var count = 0;
+    if (topic.hasVideoMaterial || topic.videoUrl.trim().isNotEmpty) count += 1;
+    if (topic.hasReadingMaterial || topic.formula.trim().isNotEmpty) count += 1;
+    if (topic.pdfUrl.trim().isNotEmpty) count += 1;
+    if (topic.quizQuestions.isNotEmpty) count += 1;
+    return math.max(1, count);
+  }
+
+  String get _durationLabel {
+    if (topic.duration.inMinutes > 0) return '${topic.duration.inMinutes} min';
+    if (topic.duration.inSeconds > 0) {
+      final minutes = topic.duration.inSeconds / 60;
+      return '${minutes.toStringAsFixed(1)} min';
+    }
+    return '12:45 min';
+  }
+
+  String get _levelLabel {
+    final value = module.category.trim();
+    if (value.isEmpty || value.toLowerCase() == 'barchasi') {
+      return "Boshlang'ich";
+    }
+    return value;
+  }
+
+  List<String> get _learningOutcomes {
+    final source = topic.summary.trim().isNotEmpty
+        ? topic.summary.trim()
+        : topic.formula.trim();
+    final parts = source
+        .split(RegExp(r'[\n\r•\-\.]+'))
+        .map((part) => part.trim())
+        .where((part) => part.length > 8)
+        .take(3)
+        .toList();
+    if (parts.length >= 3) return parts;
+    return [
+      '${topic.title} tushunchasi',
+      'Asosiy vazifalar',
+      "Bo'limlar va ularning ishlari",
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    final mutedTextColor = isDark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
+    final cardBg = isDark ? const Color(0xFF0F172A) : Colors.white;
+    final subtleBg = isDark ? const Color(0xFF111827) : const Color(0xFFF8FAFC);
+    final borderCol = isDark
+        ? const Color(0xFF1E293B)
+        : const Color(0xFFE2E8F0);
+    final imageUrl = topic.coverUrl.trim().isNotEmpty
+        ? topic.coverUrl.trim()
+        : module.coverUrl.trim();
+    final visualAsset = _moduleVisualAsset(module);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _TopicIntroIconBubble(
+              icon: Icons.arrow_back_rounded,
+              color: textColor,
+              background: subtleBg,
+              onTap: onBack,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Mavzu',
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: cardBg,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: borderCol),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _TopicHeroImage(
+                imageUrl: imageUrl,
+                topicNumber: _topicNumber,
+                title: topic.title,
+                subtitle: topic.summary.isEmpty
+                    ? module.description
+                    : topic.summary,
+                assetPath: visualAsset,
+              ),
+              const SizedBox(height: 16),
+              _TopicIntroStatRow(
+                icon: Icons.schedule_rounded,
+                label: 'Dars vaqti',
+                value: _durationLabel,
+                accent: const Color(0xFF6C4DFF),
+              ),
+              _TopicIntroStatRow(
+                icon: Icons.signal_cellular_alt_rounded,
+                label: 'Sath',
+                value: _levelLabel,
+                accent: const Color(0xFF64748B),
+              ),
+              _TopicIntroStatRow(
+                icon: Icons.menu_book_rounded,
+                label: 'Darslar soni',
+                value: '$_lessonSectionCount ta',
+                accent: const Color(0xFF7C3AED),
+              ),
+              _TopicIntroStatRow(
+                icon: Icons.percent_rounded,
+                label: "O'tish balli",
+                value: '70%',
+                accent: const Color(0xFF22C55E),
+                isLast: true,
+              ),
+              const SizedBox(height: 18),
+              Text(
+                "Nimani o'rganasiz?",
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              ..._learningOutcomes.map(
+                (outcome) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        color: AppColors.successGreen,
+                        size: 17,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          outcome,
+                          style: TextStyle(
+                            color: mutedTextColor,
+                            fontSize: 12.5,
+                            height: 1.35,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: onStart,
+                  style: ElevatedButton.styleFrom(
+                    elevation: 0,
+                    backgroundColor: const Color(0xFF6C4DFF),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text(
+                    'Darsga kirish',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TopicIntroIconBubble extends StatelessWidget {
+  const _TopicIntroIconBubble({
+    required this.icon,
+    required this.color,
+    required this.background,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final Color background;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: background,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
+          width: 46,
+          height: 46,
+          child: Icon(icon, color: color, size: 24),
+        ),
+      ),
+    );
+  }
+}
+
+class _TopicHeroImage extends StatelessWidget {
+  const _TopicHeroImage({
+    required this.imageUrl,
+    required this.topicNumber,
+    required this.title,
+    required this.subtitle,
+    required this.assetPath,
+  });
+
+  final String imageUrl;
+  final int topicNumber;
+  final String title;
+  final String subtitle;
+  final String assetPath;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: AspectRatio(
+        aspectRatio: 1.52,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _ModuleCoverBackground(
+              imageUrl: imageUrl,
+              assetPath: assetPath,
+              color: const Color(0xFF6C4DFF),
+            ),
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.08),
+                    Colors.black.withValues(alpha: 0.42),
+                    Colors.black.withValues(alpha: 0.84),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 16,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6C4DFF).withValues(alpha: .92),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: .22),
+                      ),
+                    ),
+                    child: Text(
+                      '1.$topicNumber MAVZU',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 19,
+                      height: 1.1,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  if (subtitle.trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.86),
+                        fontSize: 12,
+                        height: 1.3,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TopicIntroStatRow extends StatelessWidget {
+  const _TopicIntroStatRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.accent,
+    this.isLast = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color accent;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    final mutedTextColor = isDark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
+    final borderCol = isDark
+        ? const Color(0xFF1E293B)
+        : const Color(0xFFE2E8F0);
+
+    return Container(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 10, top: 2),
+      margin: EdgeInsets.only(bottom: isLast ? 0 : 10),
+      decoration: BoxDecoration(
+        border: isLast
+            ? null
+            : Border(bottom: BorderSide(color: borderCol, width: 1)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: accent, size: 17),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: mutedTextColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PdfLessonScreen extends StatefulWidget {
   const _PdfLessonScreen({
     required this.topic,
     required this.onBack,
     required this.onComplete,
     this.onStartQuiz,
-    this.onOpenVideo,
   });
 
   final TopicLesson topic;
   final VoidCallback onBack;
   final Future<void> Function() onComplete;
   final VoidCallback? onStartQuiz;
-  final VoidCallback? onOpenVideo;
+
+  @override
+  State<_PdfLessonScreen> createState() => _PdfLessonScreenState();
+}
+
+class _PdfLessonScreenState extends State<_PdfLessonScreen> {
+  bool _textLessonCompleted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _textLessonCompleted = false;
+  }
+
+  @override
+  void didUpdateWidget(covariant _PdfLessonScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.topic.id != widget.topic.id) {
+      _textLessonCompleted = false;
+    }
+  }
+
+  void _openMaterialViewer(LessonMaterial material) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _LessonPdfViewerScreen(material: material),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final topic = widget.topic;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final borderCol = isDark
@@ -3615,15 +4340,136 @@ class _PdfLessonScreen extends StatelessWidget {
     final mutedTextColor = isDark
         ? const Color(0xFF94A3B8)
         : const Color(0xFF64748B);
-    final readingMaterials = topic.readingMaterials;
-    final video = topic.videoMaterials.isNotEmpty
-        ? topic.videoMaterials.first
-        : null;
-    final videoUrl = video?.url.trim().isNotEmpty == true
-        ? video!.url
-        : topic.videoUrl;
+    final readingMaterials = topic.readingMaterials
+        .where((material) => !material.isVideo)
+        .toList();
+    final textMaterials = readingMaterials
+        .where((material) => !material.isPdf && material.body.trim().isNotEmpty)
+        .toList();
+    final additionalMaterials = <LessonMaterial>[];
+    final hasTextLesson =
+        topic.formula.trim().isNotEmpty || textMaterials.isNotEmpty;
 
-    Widget section(String title, Widget child) {
+    void addAdditionalMaterial(LessonMaterial material) {
+      final key = '${material.title.trim()}|${material.url.trim()}';
+      final exists = additionalMaterials.any(
+        (item) => '${item.title.trim()}|${item.url.trim()}' == key,
+      );
+      if (!exists) additionalMaterials.add(material);
+    }
+
+    void showTestLauncherSheet() {
+      if (topic.quizQuestions.isEmpty) return;
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) {
+          final sheetDark = Theme.of(context).brightness == Brightness.dark;
+          return DraggableScrollableSheet(
+            initialChildSize: .74,
+            minChildSize: .46,
+            maxChildSize: .92,
+            builder: (context, scrollController) => Container(
+              decoration: BoxDecoration(
+                color: sheetDark ? const Color(0xFF020617) : Colors.white,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
+                ),
+              ),
+              child: ListView(
+                controller: scrollController,
+                padding: EdgeInsets.fromLTRB(
+                  18,
+                  12,
+                  18,
+                  MediaQuery.viewPaddingOf(context).bottom + 18,
+                ),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 5,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: sheetDark
+                            ? Colors.white.withValues(alpha: .18)
+                            : const Color(0xFFE2E8F0),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                        iconSize: 24,
+                        style: IconButton.styleFrom(
+                          fixedSize: const Size.square(44),
+                          padding: EdgeInsets.zero,
+                          backgroundColor: sheetDark
+                              ? Colors.white.withValues(alpha: .08)
+                              : const Color(0xFFF1F5F9),
+                          foregroundColor: sheetDark
+                              ? Colors.white
+                              : const Color(0xFF0F172A),
+                          shape: const CircleBorder(),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Test',
+                          style: TextStyle(
+                            color: sheetDark
+                                ? Colors.white
+                                : const Color(0xFF0F172A),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  _PostVideoQuizLauncher(
+                    topic: topic,
+                    ready: true,
+                    onStart: () {
+                      Navigator.pop(context);
+                      unawaited(widget.onComplete());
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    if (topic.pdfUrl.trim().isNotEmpty) {
+      addAdditionalMaterial(
+        LessonMaterial(
+          kind: 'pdf',
+          title: topic.pdfTitle.trim().isEmpty ? 'Mavzu PDF' : topic.pdfTitle,
+          url: topic.pdfUrl,
+        ),
+      );
+    }
+    for (final material in readingMaterials) {
+      if (material.isPdf || material.url.trim().isNotEmpty) {
+        addAdditionalMaterial(material);
+      }
+    }
+
+    Widget section({
+      required IconData icon,
+      required String title,
+      required Widget child,
+      String? subtitle,
+    }) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
@@ -3642,13 +4488,47 @@ class _PdfLessonScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: TextStyle(
-                color: textColor,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: AppColors.studentPrimary.withValues(alpha: .1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: AppColors.studentPrimary, size: 19),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            color: mutedTextColor,
+                            fontSize: 13,
+                            height: 1.35,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 14),
             child,
@@ -3662,119 +4542,475 @@ class _PdfLessonScreen extends StatelessWidget {
       children: [
         _MobileHeader(
           title: topic.title,
-          subtitle: 'Matn, PDF, video va test bitta sahifada',
-          onBack: onBack,
-        ),
-        const SizedBox(height: 18),
-        _GlassCard(
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF24116D), Color(0xFF0B1220)],
-          ),
-          child: Text(
-            topic.summary.isEmpty
-                ? 'Bu mavzuga biriktirilgan barcha materiallar quyida ketma-ket ko‘rinadi.'
-                : topic.summary,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: .8),
-              height: 1.5,
-            ),
-          ),
+          subtitle: 'Matnli dars, qo‘shimcha materiallar va test',
+          onBack: widget.onBack,
         ),
         const SizedBox(height: 16),
         section(
-          '📄 Dars matni / PDF',
-          readingMaterials.isEmpty && topic.formula.trim().isEmpty
+          icon: Icons.menu_book_rounded,
+          title: 'Matnli dars',
+          subtitle: 'Mavzuning asosiy tushunchalari va izohlari.',
+          child: !hasTextLesson
               ? Text(
-                  'Bu mavzu uchun matn yoki PDF hali biriktirilmagan.',
+                  'Bu mavzu uchun matnli dars hali biriktirilmagan.',
                   style: TextStyle(color: mutedTextColor),
                 )
               : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (final material in readingMaterials) ...[
-                      _InlineLessonMaterial(material: material),
-                      const SizedBox(height: 12),
-                    ],
-                    if (readingMaterials.isEmpty &&
-                        topic.formula.trim().isNotEmpty)
+                    if (topic.formula.trim().isNotEmpty) ...[
                       _InlineTextBlock(
-                        title: topic.pdfTitle,
+                        title: topic.pdfTitle.trim().isEmpty
+                            ? topic.title
+                            : topic.pdfTitle,
                         body: topic.formula,
                       ),
+                      if (textMaterials.isNotEmpty) const SizedBox(height: 12),
+                    ],
+                    for (final material in textMaterials) ...[
+                      _InlineTextBlock(
+                        title: material.title,
+                        body: material.body,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    _LessonStepCompleteButton(
+                      completed: _textLessonCompleted,
+                      onPressed: () {
+                        setState(() {
+                          _textLessonCompleted = true;
+                        });
+                        showTestLauncherSheet();
+                      },
+                    ),
                   ],
                 ),
         ),
         const SizedBox(height: 16),
         section(
-          '🎥 Video dars',
-          videoUrl.trim().isEmpty
+          icon: Icons.collections_bookmark_rounded,
+          title: 'Qo‘shimcha materiallar',
+          subtitle: 'PDF va foydali manbalarni ilova ichida ko‘ring.',
+          child: additionalMaterials.isEmpty
               ? Text(
-                  'Bu mavzu uchun video hali biriktirilmagan.',
+                  'Qo‘shimcha materiallar hali biriktirilmagan.',
                   style: TextStyle(color: mutedTextColor),
                 )
-              : _InlineVideoPlayer(
-                  url: videoUrl,
-                  title:
-                      video?.title ??
-                      (topic.videoTitle.isEmpty
-                          ? 'Video dars'
-                          : topic.videoTitle),
-                  onOpenFull: onOpenVideo,
-                ),
-        ),
-        const SizedBox(height: 16),
-        section(
-          '📝 Test',
-          topic.quizQuestions.isEmpty
-              ? Text(
-                  'Bu mavzu uchun test hali qo‘shilmagan.',
-                  style: TextStyle(color: mutedTextColor),
-                )
-              : _InlineQuizPreview(
-                  questionCount: topic.quizQuestions.length,
-                  onStart: onStartQuiz,
+              : Column(
+                  children: [
+                    for (
+                      var index = 0;
+                      index < additionalMaterials.length;
+                      index++
+                    ) ...[
+                      _SupplementalMaterialTile(
+                        material: additionalMaterials[index],
+                        index: index + 1,
+                        onView: () =>
+                            _openMaterialViewer(additionalMaterials[index]),
+                      ),
+                      if (index != additionalMaterials.length - 1)
+                        const SizedBox(height: 10),
+                    ],
+                  ],
                 ),
         ),
         const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: () => unawaited(onComplete()),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.successGreen,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+        if (topic.quizQuestions.isEmpty)
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () => unawaited(widget.onComplete()),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.successGreen,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              icon: const Icon(Icons.check_rounded),
+              label: Text(
+                _t(context, 'finish_reading'),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-            icon: const Icon(Icons.check_rounded),
-            label: Text(
-              _t(context, 'finish_reading'),
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
           ),
-        ),
         const SizedBox(height: 32),
       ],
     );
   }
 }
 
-class _InlineLessonMaterial extends StatelessWidget {
+class _SupplementalMaterialTile extends StatelessWidget {
+  const _SupplementalMaterialTile({
+    required this.material,
+    required this.index,
+    required this.onView,
+  });
+
+  final LessonMaterial material;
+  final int index;
+  final VoidCallback onView;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final title = material.title.trim().isEmpty
+        ? 'Qo‘shimcha material $index'
+        : material.title.trim();
+    final typeLabel = _lessonMaterialTypeLabel(material);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF111827) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .13),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.errorRed.withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(
+              Icons.picture_as_pdf_rounded,
+              color: AppColors.errorRed,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  typeLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isDark
+                        ? const Color(0xFF94A3B8)
+                        : const Color(0xFF64748B),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            onPressed: material.url.trim().isEmpty ? null : onView,
+            icon: const Icon(Icons.visibility_rounded, size: 20),
+            tooltip: 'Ilova ichida ko‘rish',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _lessonMaterialTypeLabel(LessonMaterial material) {
+  final url = material.url.toLowerCase();
+  if (material.isPdf || url.contains('.pdf')) return 'PDF hujjat';
+  if (url.contains('docs.google.com')) return 'Google hujjat';
+  if (url.contains('drive.google.com')) return 'Google Drive fayl';
+  if (material.isLink) return 'Tashqi manba';
+  return 'Qo‘shimcha fayl';
+}
+
+class _LessonPdfViewerScreen extends StatefulWidget {
+  const _LessonPdfViewerScreen({required this.material});
+
+  final LessonMaterial material;
+
+  @override
+  State<_LessonPdfViewerScreen> createState() => _LessonPdfViewerScreenState();
+}
+
+class _LessonPdfViewerScreenState extends State<_LessonPdfViewerScreen> {
+  final PdfViewerController _controller = PdfViewerController();
+  int _page = 1;
+  int _pageCount = 0;
+  String _error = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final rawUrl = widget.material.url.trim();
+    final viewerUrl = _normalizeLessonFileUrl(rawUrl);
+
+    return Scaffold(
+      backgroundColor: isDark
+          ? const Color(0xFF020617)
+          : const Color(0xFFF4F7FB),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+              child: Row(
+                children: [
+                  IconButton.filledTonal(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.material.title.trim().isEmpty
+                          ? 'PDF Viewer'
+                          : widget.material.title.trim(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.studentPrimary.withValues(alpha: .1),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      _pageCount == 0 ? 'PDF' : '$_page / $_pageCount',
+                      style: const TextStyle(
+                        color: AppColors.studentPrimary,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF0F172A) : Colors.white,
+                      border: Border.all(
+                        color: AppColors.studentPrimary.withValues(alpha: .12),
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: _error.isNotEmpty || viewerUrl.isEmpty
+                        ? _PdfViewerError(
+                            message: viewerUrl.isEmpty
+                                ? 'Bu material uchun PDF manzil kiritilmagan.'
+                                : _error,
+                          )
+                        : SfPdfViewer.network(
+                            viewerUrl,
+                            controller: _controller,
+                            canShowScrollHead: true,
+                            canShowScrollStatus: false,
+                            onDocumentLoaded: (details) {
+                              setState(() {
+                                _page = 1;
+                                _pageCount = details.document.pages.count;
+                                _error = '';
+                              });
+                            },
+                            onPageChanged: (details) {
+                              setState(() => _page = details.newPageNumber);
+                            },
+                            onDocumentLoadFailed: (details) {
+                              setState(() {
+                                _error = details.description.trim().isEmpty
+                                    ? 'PDF yuklanmadi. Fayl public bo‘lishi yoki PDF manzili to‘g‘ri berilishi kerak.'
+                                    : details.description;
+                              });
+                            },
+                          ),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF0F172A) : Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: AppColors.studentPrimary.withValues(alpha: .12),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _page > 1
+                            ? () => _controller.previousPage()
+                            : null,
+                        icon: const Icon(Icons.chevron_left_rounded),
+                        label: const Text('Oldingi'),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      child: Text(
+                        _pageCount == 0 ? '—' : '$_page / $_pageCount',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _pageCount > 0 && _page < _pageCount
+                            ? () => _controller.nextPage()
+                            : null,
+                        icon: const Icon(Icons.chevron_right_rounded),
+                        label: const Text('Keyingi'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PdfViewerError extends StatelessWidget {
+  const _PdfViewerError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.errorRed.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: const Icon(
+                Icons.picture_as_pdf_rounded,
+                color: AppColors.errorRed,
+                size: 34,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.w800, height: 1.4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineLessonMaterial extends StatefulWidget {
   const _InlineLessonMaterial({required this.material});
 
   final LessonMaterial material;
 
   @override
+  State<_InlineLessonMaterial> createState() => _InlineLessonMaterialState();
+}
+
+class _InlineLessonMaterialState extends State<_InlineLessonMaterial> {
+  Timer? _pdfLoadTimer;
+  bool _pdfLoaded = false;
+  bool _pdfFailed = false;
+  String _pdfError = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _schedulePdfFallback();
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineLessonMaterial oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.material.url != widget.material.url ||
+        oldWidget.material.kind != widget.material.kind) {
+      _pdfLoaded = false;
+      _pdfFailed = false;
+      _pdfError = '';
+      _schedulePdfFallback();
+    }
+  }
+
+  @override
+  void dispose() {
+    _pdfLoadTimer?.cancel();
+    super.dispose();
+  }
+
+  void _schedulePdfFallback() {
+    _pdfLoadTimer?.cancel();
+    if (canUseEmbeddedPdfViewer) return;
+    final url = widget.material.url.trim();
+    final isPdfUrl =
+        widget.material.isPdf || url.toLowerCase().contains('.pdf');
+    if (!isPdfUrl || url.isEmpty) return;
+    _pdfLoadTimer = Timer(const Duration(seconds: 8), () {
+      if (!mounted || _pdfLoaded) return;
+      setState(() {
+        _pdfFailed = true;
+        _pdfError =
+            'PDF preview yuklanmadi. Fayl ruxsatini yoki link formatini tekshiring.';
+      });
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final url = material.url.trim();
+    final material = widget.material;
+    final rawUrl = material.url.trim();
+    final url = _normalizeLessonFileUrl(rawUrl);
+    final embeddedPdfUrl = _embeddedLessonPdfUrl(rawUrl, url);
     final isPdfUrl = material.isPdf || url.toLowerCase().contains('.pdf');
     final hasBody = material.body.trim().isNotEmpty;
     final hasUrl = url.isNotEmpty;
-    
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -3812,17 +5048,69 @@ class _InlineLessonMaterial extends StatelessWidget {
           if (hasBody)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-              child: _RichLessonBody(body: material.body),
+              child: _ExpandableLessonBody(body: material.body),
             ),
           if (isPdfUrl && hasUrl)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  height: 520, 
-                  child: SfPdfViewer.network(url),
-                ),
+              child: Column(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      height: math.min(
+                        520,
+                        math.max(340, MediaQuery.sizeOf(context).height * .52),
+                      ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ColoredBox(
+                            color: isDark
+                                ? const Color(0xFF0F172A)
+                                : const Color(0xFFF1F5F9),
+                            child: canUseEmbeddedPdfViewer
+                                ? buildEmbeddedPdfViewer(embeddedPdfUrl)
+                                : SfPdfViewer.network(
+                                    url,
+                                    canShowScrollHead: false,
+                                    canShowScrollStatus: false,
+                                    onDocumentLoaded: (_) {
+                                      _pdfLoadTimer?.cancel();
+                                      if (!mounted) return;
+                                      setState(() {
+                                        _pdfLoaded = true;
+                                        _pdfFailed = false;
+                                        _pdfError = '';
+                                      });
+                                    },
+                                    onDocumentLoadFailed: (details) {
+                                      _pdfLoadTimer?.cancel();
+                                      if (!mounted) return;
+                                      setState(() {
+                                        _pdfFailed = true;
+                                        _pdfError =
+                                            details.description.trim().isEmpty
+                                            ? 'PDF preview yuklanmadi.'
+                                            : details.description;
+                                      });
+                                    },
+                                  ),
+                          ),
+                          if (!canUseEmbeddedPdfViewer && _pdfFailed)
+                            _PdfPreviewFallback(message: _pdfError),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else if (material.isPdf && !hasUrl)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              child: _PdfPreviewFallback(
+                message: 'Bu PDF uchun link kiritilmagan.',
               ),
             )
           else if (hasUrl && !isPdfUrl)
@@ -3842,6 +5130,174 @@ class _InlineLessonMaterial extends StatelessWidget {
   }
 }
 
+class _PdfPreviewFallback extends StatelessWidget {
+  const _PdfPreviewFallback({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: (isDark ? Colors.black : Colors.white).withValues(alpha: .88),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .2),
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 54,
+              height: 54,
+              decoration: BoxDecoration(
+                color: AppColors.errorRed.withValues(alpha: .12),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: const Icon(
+                Icons.picture_as_pdf_rounded,
+                color: AppColors.errorRed,
+                size: 30,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isDark ? Colors.white70 : AppColors.studentInk,
+                fontWeight: FontWeight.w800,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _normalizeLessonFileUrl(String rawUrl) {
+  final value = rawUrl.trim();
+  if (value.isEmpty) return value;
+  final withScheme = value.startsWith('www.') ? 'https://$value' : value;
+  final uri = Uri.tryParse(withScheme);
+  if (uri == null || !uri.hasScheme) return value;
+
+  final host = uri.host.toLowerCase();
+  if (host.contains('drive.google.com')) {
+    final segments = uri.pathSegments;
+    final fileIndex = segments.indexOf('d');
+    final fileId = fileIndex >= 0 && fileIndex + 1 < segments.length
+        ? segments[fileIndex + 1]
+        : uri.queryParameters['id'];
+    if (fileId != null && fileId.trim().isNotEmpty) {
+      return Uri.https('drive.google.com', '/uc', {
+        'export': 'download',
+        'id': fileId,
+      }).toString();
+    }
+  }
+
+  if (host.contains('dropbox.com')) {
+    final params = Map<String, String>.from(uri.queryParameters);
+    params.remove('dl');
+    params['raw'] = '1';
+    return uri.replace(queryParameters: params).toString();
+  }
+
+  if (host == 'github.com' && uri.pathSegments.length >= 5) {
+    final segments = uri.pathSegments;
+    final blobIndex = segments.indexOf('blob');
+    if (blobIndex >= 0 && blobIndex + 1 < segments.length) {
+      final owner = segments[0];
+      final repo = segments[1];
+      final branch = segments[blobIndex + 1];
+      final path = segments.skip(blobIndex + 2).join('/');
+      return Uri.https(
+        'raw.githubusercontent.com',
+        '/$owner/$repo/$branch/$path',
+      ).toString();
+    }
+  }
+
+  if (host.contains('docs.google.com')) {
+    final segments = uri.pathSegments;
+    final documentTypes = {'document', 'presentation', 'spreadsheets'};
+    if (segments.length >= 3 &&
+        documentTypes.contains(segments[0]) &&
+        segments[1] == 'd') {
+      if (segments[0] == 'presentation') {
+        return Uri.https(
+          'docs.google.com',
+          '/presentation/d/${segments[2]}/export/pdf',
+        ).toString();
+      }
+      return Uri.https(
+        'docs.google.com',
+        '/${segments[0]}/d/${segments[2]}/export',
+        {'format': 'pdf'},
+      ).toString();
+    }
+  }
+
+  return withScheme;
+}
+
+String _embeddedLessonPdfUrl(String rawUrl, String normalizedUrl) {
+  final source = rawUrl.trim().isEmpty ? normalizedUrl : rawUrl.trim();
+  final withScheme = source.startsWith('www.') ? 'https://$source' : source;
+  final uri = Uri.tryParse(withScheme);
+  if (uri == null || !uri.hasScheme) return normalizedUrl;
+
+  final host = uri.host.toLowerCase();
+  if (host.contains('drive.google.com')) {
+    final segments = uri.pathSegments;
+    final fileIndex = segments.indexOf('d');
+    final fileId = fileIndex >= 0 && fileIndex + 1 < segments.length
+        ? segments[fileIndex + 1]
+        : uri.queryParameters['id'];
+    if (fileId != null && fileId.trim().isNotEmpty) {
+      return Uri.https(
+        'drive.google.com',
+        '/file/d/$fileId/preview',
+      ).toString();
+    }
+  }
+
+  if (host.contains('docs.google.com')) {
+    final segments = uri.pathSegments;
+    final documentTypes = {'document', 'presentation', 'spreadsheets'};
+    if (segments.length >= 3 &&
+        documentTypes.contains(segments[0]) &&
+        segments[1] == 'd') {
+      return Uri.https(
+        'docs.google.com',
+        '/${segments[0]}/d/${segments[2]}/preview',
+      ).toString();
+    }
+  }
+
+  final normalizedUri = Uri.tryParse(normalizedUrl);
+  final normalizedHost = normalizedUri?.host.toLowerCase() ?? '';
+  final isLocalFile =
+      normalizedHost == 'localhost' ||
+      normalizedHost == '127.0.0.1' ||
+      normalizedHost == '0.0.0.0' ||
+      normalizedHost.endsWith('.local');
+
+  if (isLocalFile || normalizedUri?.scheme == 'data') {
+    return normalizedUrl;
+  }
+
+  return normalizedUrl;
+}
+
 class _InlineTextBlock extends StatelessWidget {
   const _InlineTextBlock({required this.title, required this.body});
 
@@ -3850,48 +5306,176 @@ class _InlineTextBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.studentPrimary.withValues(alpha: .07),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppColors.studentPrimary.withValues(alpha: .14),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title.trim().isEmpty ? 'Dars matni' : title,
-            style: const TextStyle(fontWeight: FontWeight.w900),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title.trim().isEmpty ? 'Dars matni' : title.toUpperCase(),
+          style: TextStyle(
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: .62),
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            letterSpacing: .2,
           ),
+        ),
+        const SizedBox(height: 10),
+        _ExpandableLessonBody(body: body),
+      ],
+    );
+  }
+}
+
+String _lessonPlainPreview(String body) {
+  final lines = body.split('\n');
+  final buffer = StringBuffer();
+  for (final rawLine in lines) {
+    final line = rawLine.trim();
+    if (line.isEmpty) continue;
+    if (_RichLessonBody.markdownImagePattern.hasMatch(line)) continue;
+    if (_looksLikeImageUrl(line)) continue;
+    if (buffer.isNotEmpty) buffer.write(' ');
+    buffer.write(line);
+  }
+  return buffer.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+bool _looksLikeImageUrl(String value) {
+  final lower = value.toLowerCase().trim();
+  return (lower.startsWith('http://') || lower.startsWith('https://')) &&
+      (lower.contains('.png') ||
+          lower.contains('.jpg') ||
+          lower.contains('.jpeg') ||
+          lower.contains('.webp') ||
+          lower.contains('.gif'));
+}
+
+class _ExpandableLessonBody extends StatefulWidget {
+  const _ExpandableLessonBody({required this.body});
+
+  final String body;
+
+  @override
+  State<_ExpandableLessonBody> createState() => _ExpandableLessonBodyState();
+}
+
+class _ExpandableLessonBodyState extends State<_ExpandableLessonBody> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final preview = _lessonPlainPreview(widget.body);
+    final bodyLines = widget.body.split('\n').where((line) {
+      return line.trim().isNotEmpty;
+    }).length;
+    final canCollapse =
+        preview.length > 190 ||
+        bodyLines > 4 ||
+        _RichLessonBody.markdownImagePattern.hasMatch(widget.body) ||
+        widget.body.split('\n').any(_looksLikeImageUrl);
+
+    final collapsedText = preview.isEmpty
+        ? 'Matnli dars ma’lumoti biriktirilgan.'
+        : preview;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          child: _expanded
+              ? _RichLessonBody(
+                  key: const ValueKey('expanded-lesson-body'),
+                  body: widget.body,
+                )
+              : Text(
+                  collapsedText,
+                  key: const ValueKey('collapsed-lesson-body'),
+                  maxLines: canCollapse ? 5 : null,
+                  overflow: canCollapse ? TextOverflow.ellipsis : null,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    height: 1.58,
+                    color: isDark
+                        ? Colors.white.withValues(alpha: .84)
+                        : AppColors.studentInk.withValues(alpha: .84),
+                  ),
+                ),
+        ),
+        if (canCollapse) ...[
           const SizedBox(height: 10),
-          _RichLessonBody(body: body),
+          TextButton.icon(
+            onPressed: () => setState(() => _expanded = !_expanded),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.studentPrimary,
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 34),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            iconAlignment: IconAlignment.end,
+            icon: Icon(
+              _expanded
+                  ? Icons.keyboard_arrow_up_rounded
+                  : Icons.keyboard_arrow_down_rounded,
+            ),
+            label: Text(
+              _expanded ? 'Yig‘ish' : 'To‘liq ko‘rish',
+              style: const TextStyle(fontWeight: FontWeight.w900),
+            ),
+          ),
         ],
+      ],
+    );
+  }
+}
+
+class _LessonStepCompleteButton extends StatelessWidget {
+  const _LessonStepCompleteButton({
+    required this.completed,
+    required this.onPressed,
+  });
+
+  final bool completed;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (completed) return const SizedBox.shrink();
+
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: AppColors.successGreen,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        icon: const Icon(Icons.check_rounded),
+        label: const Text(
+          'Matnli darsni tugatdim',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+        ),
       ),
     );
   }
 }
 
 class _RichLessonBody extends StatelessWidget {
-  const _RichLessonBody({required this.body});
+  const _RichLessonBody({super.key, required this.body});
 
   final String body;
 
-  static final RegExp _markdownImagePattern = RegExp(
+  static final RegExp markdownImagePattern = RegExp(
     r'^!\[([^\]]*)\]\(([^\)]+)\)$',
   );
 
   bool _isImageUrl(String value) {
-    final lower = value.toLowerCase().trim();
-    return (lower.startsWith('http://') || lower.startsWith('https://')) &&
-        (lower.contains('.png') ||
-            lower.contains('.jpg') ||
-            lower.contains('.jpeg') ||
-            lower.contains('.webp') ||
-            lower.contains('.gif'));
+    return _looksLikeImageUrl(value);
   }
 
   @override
@@ -3954,7 +5538,7 @@ class _RichLessonBody extends StatelessWidget {
 
     for (final rawLine in lines) {
       final line = rawLine.trim();
-      final match = _markdownImagePattern.firstMatch(line);
+      final match = markdownImagePattern.firstMatch(line);
       if (match != null) {
         flushParagraph();
         addImage(match.group(2)!.trim(), match.group(1) ?? '');
@@ -3980,6 +5564,328 @@ class _RichLessonBody extends StatelessWidget {
   }
 }
 
+class _PostVideoQuizLauncher extends StatelessWidget {
+  const _PostVideoQuizLauncher({
+    required this.topic,
+    required this.ready,
+    required this.onStart,
+  });
+
+  final TopicLesson topic;
+  final bool ready;
+  final VoidCallback? onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final questionCount = topic.quizQuestions.length;
+    final minutes = math.max(5, questionCount * 2);
+    final hasImage = topic.quizQuestions.any(
+      (question) => question.isImageQuestion,
+    );
+    final hasVideo = topic.quizQuestions.any(
+      (question) => question.isVideoQuestion,
+    );
+
+    if (!ready) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isDark
+              ? Colors.white.withValues(alpha: .045)
+              : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: AppColors.studentPrimary.withValues(alpha: .16),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: AppColors.studentPrimary.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.lock_clock_rounded,
+                color: AppColors.studentPrimary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Test matnli darsdan keyin ochiladi',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'Avval matnli darsni tugating, keyin mavzu testini boshlashingiz mumkin.',
+                    style: TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.studentPrimary.withValues(alpha: isDark ? .20 : .09),
+            AppColors.studentAccent.withValues(alpha: isDark ? .18 : .08),
+            AppColors.successGreen.withValues(alpha: isDark ? .13 : .08),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .18),
+          width: 1.2,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: isDark ? .10 : .84),
+                  borderRadius: BorderRadius.circular(17),
+                ),
+                child: const Icon(
+                  Icons.assignment_turned_in_rounded,
+                  color: AppColors.successGreen,
+                  size: 27,
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Mavzu testi',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      topic.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: .62),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _ReadyBadge(ready: ready),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _QuizLaunchStat(
+                  icon: Icons.quiz_rounded,
+                  value: '$questionCount ta',
+                  label: 'Savol',
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _QuizLaunchStat(
+                  icon: Icons.schedule_rounded,
+                  value: '$minutes daqiqa',
+                  label: 'Vaqt',
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: _QuizLaunchStat(
+                  icon: Icons.percent_rounded,
+                  value: '70%',
+                  label: 'O‘tish balli',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 13),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              const _SoftChip(
+                icon: Icons.short_text_rounded,
+                label: 'Matnli savol',
+              ),
+              if (hasImage)
+                const _SoftChip(
+                  icon: Icons.image_rounded,
+                  label: 'Rasmli savol',
+                ),
+              if (hasVideo)
+                const _SoftChip(
+                  icon: Icons.play_circle_outline_rounded,
+                  label: 'Video savol',
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: isDark ? .08 : .72),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.amber.withValues(alpha: .22)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.star_rounded, color: AppColors.amber, size: 24),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '+20 XP test muvaffaqiyatli yakunlansa qo‘shiladi',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onStart,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.studentPrimary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text(
+                'Testni boshlash',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReadyBadge extends StatelessWidget {
+  const _ReadyBadge({required this.ready});
+
+  final bool ready;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: (ready ? AppColors.successGreen : AppColors.studentPrimary)
+            .withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        ready ? 'Tayyor' : 'Video so‘ng',
+        style: TextStyle(
+          color: ready ? AppColors.successGreen : AppColors.studentPrimary,
+          fontWeight: FontWeight.w900,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+}
+
+class _QuizLaunchStat extends StatelessWidget {
+  const _QuizLaunchStat({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .72),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .10),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: AppColors.studentPrimary, size: 18),
+          const SizedBox(height: 5),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12.5),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: .58),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _InlineQuizPreview extends StatelessWidget {
   const _InlineQuizPreview({required this.questionCount, this.onStart});
 
@@ -3988,36 +5894,203 @@ class _InlineQuizPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppColors.successGreen.withValues(alpha: .12),
-            AppColors.studentPrimary.withValues(alpha: .08),
-          ],
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 390;
+        return Container(
+          padding: EdgeInsets.all(compact ? 14 : 16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.successGreen.withValues(alpha: isDark ? .20 : .13),
+                AppColors.studentPrimary.withValues(alpha: isDark ? .18 : .10),
+                AppColors.studentAccent.withValues(alpha: isDark ? .12 : .08),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: AppColors.successGreen.withValues(alpha: .22),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.studentPrimary.withValues(alpha: .08),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _QuizPreviewHeader(questionCount: questionCount),
+                    const SizedBox(height: 12),
+                    _QuizPreviewMeta(),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: onStart,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.studentPrimary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Testni boshlash'),
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _QuizPreviewHeader(questionCount: questionCount),
+                          const SizedBox(height: 12),
+                          _QuizPreviewMeta(),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    FilledButton.icon(
+                      onPressed: onStart,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.studentPrimary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 14,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text('Boshlash'),
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _QuizPreviewHeader extends StatelessWidget {
+  const _QuizPreviewHeader({required this.questionCount});
+
+  final int questionCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .86),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.successGreen.withValues(alpha: .16),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.fact_check_rounded,
+            color: AppColors.successGreen,
+          ),
         ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.successGreen.withValues(alpha: .2)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Mavzu testi',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 17),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '$questionCount ta savol tayyor',
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: .64),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuizPreviewMeta extends StatelessWidget {
+  const _QuizPreviewMeta();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        const _SoftChip(icon: Icons.timer_rounded, label: 'Vaqt nazoratli'),
+        const _SoftChip(icon: Icons.shuffle_rounded, label: 'Aralash savollar'),
+        _SoftChip(
+          icon: Icons.verified_rounded,
+          label: 'Natija saqlanadi',
+          color: AppColors.successGreen,
+        ),
+      ],
+    );
+  }
+}
+
+class _SoftChip extends StatelessWidget {
+  const _SoftChip({
+    required this.icon,
+    required this.label,
+    this.color = AppColors.studentPrimary,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .72),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .12),
+        ),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
-            Icons.quiz_rounded,
-            color: AppColors.successGreen,
-            size: 34,
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              '$questionCount ta savoldan iborat kreativ test tayyor.',
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          FilledButton.icon(
-            onPressed: onStart,
-            icon: const Icon(Icons.play_arrow_rounded),
-            label: const Text('Boshlash'),
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
           ),
         ],
       ),
@@ -4029,12 +6102,24 @@ class _InlineVideoPlayer extends StatefulWidget {
   const _InlineVideoPlayer({
     required this.url,
     required this.title,
+    required this.duration,
+    required this.watchedPercent,
+    required this.topicLabel,
     this.onOpenFull,
+    this.onCompleted,
+    this.compact = false,
+    this.showStats = true,
   });
 
   final String url;
   final String title;
+  final Duration duration;
+  final int watchedPercent;
+  final String topicLabel;
   final VoidCallback? onOpenFull;
+  final VoidCallback? onCompleted;
+  final bool compact;
+  final bool showStats;
 
   @override
   State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
@@ -4042,8 +6127,18 @@ class _InlineVideoPlayer extends StatefulWidget {
 
 class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
   YoutubePlayerController? _youtubeController;
+  StreamSubscription<YoutubePlayerValue>? _youtubeSubscription;
+  Timer? _youtubeTicker;
   VideoPlayerController? _videoController;
+  String? _youtubeVideoId;
   bool _initializing = false;
+  bool _youtubeStarted = false;
+  bool _refreshingYoutubeTime = false;
+  Duration _youtubeDuration = Duration.zero;
+  Duration _youtubePosition = Duration.zero;
+  double _playbackSpeed = 1.0;
+  bool _captionsEnabled = false;
+  bool _completedReported = false;
 
   @override
   void initState() {
@@ -4055,6 +6150,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
   void didUpdateWidget(covariant _InlineVideoPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
+      _completedReported = false;
       _disposeControllers();
       _configure();
     }
@@ -4067,8 +6163,17 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
   }
 
   void _disposeControllers() {
+    _youtubeSubscription?.cancel();
+    _youtubeSubscription = null;
+    _youtubeTicker?.cancel();
+    _youtubeTicker = null;
     _youtubeController?.close();
     _youtubeController = null;
+    _youtubeVideoId = null;
+    _youtubeStarted = false;
+    _youtubeDuration = Duration.zero;
+    _youtubePosition = Duration.zero;
+    _videoController?.removeListener(_handleVideoTick);
     _videoController?.dispose();
     _videoController = null;
   }
@@ -4077,15 +6182,31 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     final url = widget.url.trim();
     final youtubeId = YoutubePlayerController.convertUrlToId(url);
     if (youtubeId != null) {
+      _youtubeVideoId = youtubeId;
       _youtubeController = YoutubePlayerController.fromVideoId(
         videoId: youtubeId,
         autoPlay: false,
         params: const YoutubePlayerParams(
-          showControls: true,
-          showFullscreenButton: true,
+          showControls: false,
+          showFullscreenButton: false,
           enableJavaScript: true,
+          pointerEvents: PointerEvents.none,
         ),
       );
+      _youtubeSubscription = _youtubeController?.listen((value) {
+        if (!mounted) return;
+        if (value.playerState == PlayerState.paused ||
+            value.playerState == PlayerState.ended) {
+          _youtubeTicker?.cancel();
+          _youtubeTicker = null;
+          if (_youtubeStarted) setState(() => _youtubeStarted = false);
+        }
+        if (_completedReported || value.playerState != PlayerState.ended) {
+          return;
+        }
+        _completedReported = true;
+        widget.onCompleted?.call();
+      });
       return;
     }
     final uri = Uri.tryParse(url);
@@ -4093,6 +6214,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
     _initializing = true;
     final controller = VideoPlayerController.networkUrl(uri);
     _videoController = controller;
+    controller.addListener(_handleVideoTick);
     controller
         .initialize()
         .then((_) {
@@ -4105,62 +6227,1162 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
         });
   }
 
+  void _handleVideoTick() {
+    if (!mounted) return;
+    final video = _videoController;
+    if (video != null &&
+        video.value.isInitialized &&
+        !_completedReported &&
+        video.value.duration > Duration.zero) {
+      final remaining = video.value.duration - video.value.position;
+      if (!remaining.isNegative &&
+          remaining <= const Duration(milliseconds: 900)) {
+        _completedReported = true;
+        widget.onCompleted?.call();
+      }
+    }
+    setState(() {});
+  }
+
+  String _clock(Duration value) {
+    final minutes = value.inMinutes;
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  Duration get _displayDuration {
+    if (_youtubeDuration > Duration.zero) return _youtubeDuration;
+    final video = _videoController;
+    if (video != null &&
+        video.value.isInitialized &&
+        video.value.duration > Duration.zero) {
+      return video.value.duration;
+    }
+    return widget.duration > Duration.zero
+        ? widget.duration
+        : const Duration(minutes: 12, seconds: 45);
+  }
+
+  Duration get _displayPosition {
+    if (_youtubePosition > Duration.zero) return _youtubePosition;
+    final video = _videoController;
+    if (video != null && video.value.isInitialized) {
+      return video.value.position;
+    }
+    final percent = widget.watchedPercent.clamp(0, 100) / 100;
+    return Duration(
+      milliseconds: (_displayDuration.inMilliseconds * percent).round(),
+    );
+  }
+
+  double get _displayProgress {
+    final total = _displayDuration.inMilliseconds;
+    if (total <= 0) return 0;
+    return (_displayPosition.inMilliseconds / total).clamp(0.0, 1.0);
+  }
+
+  void _toggleNativeVideo() {
+    final video = _videoController;
+    if (video == null || !video.value.isInitialized) return;
+    setState(() {
+      video.value.isPlaying ? video.pause() : video.play();
+    });
+  }
+
+  void _seekNativeVideo(double value) {
+    final video = _videoController;
+    if (video == null || !video.value.isInitialized) return;
+    final total = video.value.duration.inMilliseconds;
+    if (total <= 0) return;
+    final next = Duration(
+      milliseconds: (total * value.clamp(0.0, 1.0)).round(),
+    );
+    video.seekTo(next);
+  }
+
+  void _cycleNativePlaybackSpeed() {
+    final video = _videoController;
+    if (video == null || !video.value.isInitialized) return;
+    const speeds = [1.0, 1.25, 1.5, 2.0, 0.75];
+    final currentIndex = speeds.indexWhere(
+      (speed) => (speed - _playbackSpeed).abs() < 0.01,
+    );
+    final nextSpeed = speeds[(currentIndex + 1) % speeds.length];
+    video.setPlaybackSpeed(nextSpeed);
+    setState(() => _playbackSpeed = nextSpeed);
+  }
+
+  void _toggleYoutubePlayback() {
+    final youtube = _youtubeController;
+    if (youtube == null) return;
+    final shouldPlay = !_youtubeStarted;
+    setState(() => _youtubeStarted = shouldPlay);
+    if (shouldPlay) {
+      unawaited(youtube.playVideo());
+      _startYoutubeTicker();
+    } else {
+      unawaited(youtube.pauseVideo());
+      _youtubeTicker?.cancel();
+      _youtubeTicker = null;
+    }
+  }
+
+  void _seekYoutubeVideo(double value) {
+    final youtube = _youtubeController;
+    if (youtube == null) return;
+    final total = _displayDuration.inSeconds;
+    if (total <= 0) return;
+    final seconds = total * value.clamp(0.0, 1.0);
+    unawaited(youtube.seekTo(seconds: seconds, allowSeekAhead: true));
+    setState(() {
+      _youtubePosition = Duration(milliseconds: (seconds * 1000).round());
+    });
+  }
+
+  void _cycleYoutubePlaybackSpeed() {
+    final youtube = _youtubeController;
+    if (youtube == null) return;
+    const speeds = [1.0, 1.25, 1.5, 2.0, 0.75];
+    final currentIndex = speeds.indexWhere(
+      (speed) => (speed - _playbackSpeed).abs() < 0.01,
+    );
+    final nextSpeed = speeds[(currentIndex + 1) % speeds.length];
+    unawaited(youtube.setPlaybackRate(nextSpeed));
+    setState(() => _playbackSpeed = nextSpeed);
+  }
+
+  void _startYoutubeTicker() {
+    _youtubeTicker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(_refreshYoutubeTime());
+    });
+    unawaited(_refreshYoutubeTime());
+  }
+
+  Future<void> _refreshYoutubeTime() async {
+    final youtube = _youtubeController;
+    if (youtube == null || _refreshingYoutubeTime) return;
+    _refreshingYoutubeTime = true;
+    try {
+      final positionSeconds = await youtube.currentTime;
+      final durationSeconds = await youtube.duration;
+      if (!mounted) return;
+      final duration = Duration(
+        milliseconds: math.max(0, durationSeconds * 1000).round(),
+      );
+      final position = Duration(
+        milliseconds: math.max(0, positionSeconds * 1000).round(),
+      );
+      setState(() {
+        if (duration > Duration.zero) _youtubeDuration = duration;
+        _youtubePosition = position;
+      });
+      if (!_completedReported &&
+          duration > Duration.zero &&
+          duration - position <= const Duration(milliseconds: 900)) {
+        _completedReported = true;
+        widget.onCompleted?.call();
+      }
+    } catch (_) {
+      // YouTube iframe may not be ready during the first second.
+    } finally {
+      _refreshingYoutubeTime = false;
+    }
+  }
+
+  Future<void> _openFullscreenVideo() async {
+    final url = widget.url.trim();
+    if (url.isEmpty) return;
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    try {
+      if (!mounted) return;
+      await showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: 'Videoni yopish',
+        barrierColor: Colors.black,
+        transitionDuration: const Duration(milliseconds: 180),
+        pageBuilder: (context, _, __) => _FullscreenVideoDialog(
+          url: url,
+          title: widget.title,
+          topicLabel: widget.topicLabel,
+          initialSpeed: _playbackSpeed,
+          onCompleted: widget.onCompleted,
+        ),
+      );
+    } finally {
+      await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+  }
+
+  void _toggleCaptionsIndicator() {
+    setState(() => _captionsEnabled = !_captionsEnabled);
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(
+          _captionsEnabled
+              ? 'Subtitr ko‘rsatkichi yoqildi.'
+              : 'Subtitr ko‘rsatkichi o‘chirildi.',
+        ),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  String get _speedLabel {
+    final value = _playbackSpeed
+        .toStringAsFixed(2)
+        .replaceFirst(RegExp(r'\.?0+$'), '');
+    return value == '1' ? '1.0x' : '${value}x';
+  }
+
   @override
   Widget build(BuildContext context) {
     final youtube = _youtubeController;
     final video = _videoController;
+    final youtubeId = _youtubeVideoId;
+    final duration = _displayDuration;
+    final position = _displayPosition;
+    final progress = _displayProgress;
+    final watched = progress > 0
+        ? (progress * 100).round()
+        : widget.watchedPercent.clamp(0, 100).toInt();
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(widget.title, style: const TextStyle(fontWeight: FontWeight.w900)),
-        const SizedBox(height: 12),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: AspectRatio(
-            aspectRatio: 16 / 9,
-            child: youtube != null
-                ? YoutubePlayer(controller: youtube)
-                : video != null && video.value.isInitialized
-                ? Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      VideoPlayer(video),
-                      IconButton.filled(
-                        onPressed: () {
-                          setState(() {
-                            video.value.isPlaying
-                                ? video.pause()
-                                : video.play();
-                          });
-                        },
-                        icon: Icon(
-                          video.value.isPlaying
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final playerHeight = widget.compact
+                ? math.max(160.0, math.min(215.0, constraints.maxWidth * .56))
+                : math.max(225.0, math.min(330.0, constraints.maxWidth * .64));
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                width: double.infinity,
+                height: playerHeight,
+                child: video != null && video.value.isInitialized
+                    ? Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ColoredBox(
+                            color: Colors.black,
+                            child: FittedBox(
+                              fit: BoxFit.cover,
+                              child: SizedBox(
+                                width: video.value.size.width,
+                                height: video.value.size.height,
+                                child: VideoPlayer(video),
+                              ),
+                            ),
+                          ),
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.black.withValues(alpha: .08),
+                                  Colors.black.withValues(alpha: .42),
+                                ],
+                              ),
+                            ),
+                          ),
+                          _VideoPosterOverlay(
+                            title: widget.title,
+                            topicLabel: widget.topicLabel,
+                            progress: progress,
+                            position: _clock(position),
+                            duration: _clock(duration),
+                            playing: video.value.isPlaying,
+                            speedLabel: _speedLabel,
+                            captionsEnabled: _captionsEnabled,
+                            onPlay: _toggleNativeVideo,
+                            onSeek: _seekNativeVideo,
+                            onSpeedTap: _cycleNativePlaybackSpeed,
+                            onCaptionsTap: _toggleCaptionsIndicator,
+                            onOpenFull: _openFullscreenVideo,
+                          ),
+                        ],
+                      )
+                    : youtubeId != null && youtube != null
+                    ? _YoutubePoster(
+                        controller: youtube,
+                        videoId: youtubeId,
+                        title: widget.title,
+                        topicLabel: widget.topicLabel,
+                        progress: progress,
+                        position: _clock(position),
+                        duration: _clock(duration),
+                        playing: _youtubeStarted,
+                        speedLabel: _speedLabel,
+                        captionsEnabled: _captionsEnabled,
+                        onPlay: _toggleYoutubePlayback,
+                        onSeek: _seekYoutubeVideo,
+                        onSpeedTap: _cycleYoutubePlaybackSpeed,
+                        onCaptionsTap: _toggleCaptionsIndicator,
+                        onOpenFull: _openFullscreenVideo,
+                      )
+                    : Container(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFF111827), Color(0xFF3B1A72)],
+                          ),
                         ),
+                        alignment: Alignment.center,
+                        child: _initializing
+                            ? const CircularProgressIndicator(
+                                color: Colors.white,
+                              )
+                            : Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 58,
+                                    height: 58,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(
+                                        alpha: .14,
+                                      ),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.videocam_off_rounded,
+                                      color: Colors.white,
+                                      size: 30,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    'Video ilova ichida ochilmadi',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Link formatini yoki fayl ruxsatini tekshiring.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(
+                                        alpha: .72,
+                                      ),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
                       ),
-                    ],
-                  )
-                : Container(
-                    color: Colors.black12,
-                    alignment: Alignment.center,
-                    child: _initializing
-                        ? const CircularProgressIndicator()
-                        : const Text('Video URL ilova ichida ochilmadi.'),
-                  ),
+              ),
+            );
+          },
+        ),
+        if (widget.showStats) ...[
+          const SizedBox(height: 10),
+          _VideoStatsPanel(
+            duration: duration,
+            watchedPercent: watched,
+            lastPosition: position,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _YoutubePoster extends StatelessWidget {
+  const _YoutubePoster({
+    required this.controller,
+    required this.videoId,
+    required this.title,
+    required this.topicLabel,
+    required this.progress,
+    required this.position,
+    required this.duration,
+    required this.playing,
+    required this.speedLabel,
+    required this.captionsEnabled,
+    required this.onPlay,
+    required this.onSeek,
+    required this.onSpeedTap,
+    required this.onCaptionsTap,
+    required this.onOpenFull,
+  });
+
+  final YoutubePlayerController controller;
+  final String videoId;
+  final String title;
+  final String topicLabel;
+  final double progress;
+  final String position;
+  final String duration;
+  final bool playing;
+  final String speedLabel;
+  final bool captionsEnabled;
+  final VoidCallback onPlay;
+  final ValueChanged<double> onSeek;
+  final VoidCallback onSpeedTap;
+  final VoidCallback onCaptionsTap;
+  final VoidCallback? onOpenFull;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        AbsorbPointer(
+          child: YoutubePlayer(
+            controller: controller,
+            aspectRatio: 16 / 9,
+            backgroundColor: Colors.black,
           ),
         ),
-        if (widget.onOpenFull != null) ...[
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: widget.onOpenFull,
-              icon: const Icon(Icons.fullscreen_rounded),
-              label: const Text('Katta ekranda ko‘rish'),
+        if (!playing)
+          Image.network(
+            'https://img.youtube.com/vi/$videoId/hqdefault.jpg',
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF13213E), Color(0xFF1E1458)],
+                ),
+              ),
+            ),
+          ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black.withValues(alpha: .18),
+                Colors.black.withValues(alpha: .58),
+              ],
+            ),
+          ),
+        ),
+        _VideoPosterOverlay(
+          title: title,
+          topicLabel: topicLabel,
+          progress: progress,
+          position: position,
+          duration: duration,
+          playing: playing,
+          speedLabel: speedLabel,
+          captionsEnabled: captionsEnabled,
+          onPlay: onPlay,
+          onSeek: onSeek,
+          onSpeedTap: onSpeedTap,
+          onCaptionsTap: onCaptionsTap,
+          onOpenFull: onOpenFull,
+        ),
+      ],
+    );
+  }
+}
+
+class _FullscreenVideoDialog extends StatefulWidget {
+  const _FullscreenVideoDialog({
+    required this.url,
+    required this.title,
+    required this.topicLabel,
+    required this.initialSpeed,
+    this.onCompleted,
+  });
+
+  final String url;
+  final String title;
+  final String topicLabel;
+  final double initialSpeed;
+  final VoidCallback? onCompleted;
+
+  @override
+  State<_FullscreenVideoDialog> createState() => _FullscreenVideoDialogState();
+}
+
+class _FullscreenVideoDialogState extends State<_FullscreenVideoDialog> {
+  YoutubePlayerController? _youtubeController;
+  StreamSubscription<YoutubePlayerValue>? _youtubeSubscription;
+  VideoPlayerController? _videoController;
+  double _speed = 1.0;
+  bool _loading = true;
+  bool _completedReported = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _speed = widget.initialSpeed;
+    _configure();
+  }
+
+  @override
+  void dispose() {
+    _youtubeSubscription?.cancel();
+    _youtubeController?.close();
+    _videoController?.removeListener(_handleNativeTick);
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  void _configure() {
+    final youtubeId = YoutubePlayerController.convertUrlToId(widget.url);
+    if (youtubeId != null) {
+      final controller = YoutubePlayerController.fromVideoId(
+        videoId: youtubeId,
+        autoPlay: true,
+        params: const YoutubePlayerParams(
+          showControls: true,
+          showFullscreenButton: false,
+          enableJavaScript: true,
+        ),
+      );
+      _youtubeController = controller;
+      unawaited(controller.setPlaybackRate(_speed));
+      _youtubeSubscription = controller.listen((value) {
+        if (!mounted ||
+            _completedReported ||
+            value.playerState != PlayerState.ended) {
+          return;
+        }
+        _completedReported = true;
+        widget.onCompleted?.call();
+      });
+      setState(() => _loading = false);
+      return;
+    }
+
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null || !uri.hasScheme) {
+      setState(() => _loading = false);
+      return;
+    }
+    final controller = VideoPlayerController.networkUrl(uri);
+    _videoController = controller;
+    controller.addListener(_handleNativeTick);
+    controller
+        .initialize()
+        .then((_) {
+          if (!mounted) return;
+          unawaited(controller.setPlaybackSpeed(_speed));
+          unawaited(controller.play());
+          setState(() => _loading = false);
+        })
+        .catchError((_) {
+          if (!mounted) return;
+          setState(() => _loading = false);
+        });
+  }
+
+  void _handleNativeTick() {
+    final video = _videoController;
+    if (!mounted || video == null || !video.value.isInitialized) return;
+    if (!_completedReported && video.value.duration > Duration.zero) {
+      final remaining = video.value.duration - video.value.position;
+      if (!remaining.isNegative &&
+          remaining <= const Duration(milliseconds: 900)) {
+        _completedReported = true;
+        widget.onCompleted?.call();
+      }
+    }
+    setState(() {});
+  }
+
+  void _setSpeed(double value) {
+    setState(() => _speed = value);
+    unawaited(_youtubeController?.setPlaybackRate(value));
+    unawaited(_videoController?.setPlaybackSpeed(value));
+  }
+
+  String _clock(Duration value) {
+    final minutes = value.inMinutes;
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final youtube = _youtubeController;
+    final video = _videoController;
+    final videoReady = video != null && video.value.isInitialized;
+
+    return Material(
+      color: Colors.black,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded, color: Colors.white),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          widget.topicLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: .62),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: ColoredBox(
+                        color: Colors.black,
+                        child: _loading
+                            ? const Center(
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                ),
+                              )
+                            : youtube != null
+                            ? YoutubePlayer(
+                                controller: youtube,
+                                aspectRatio: 16 / 9,
+                                backgroundColor: Colors.black,
+                              )
+                            : videoReady
+                            ? Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  FittedBox(
+                                    fit: BoxFit.contain,
+                                    child: SizedBox(
+                                      width: video.value.size.width,
+                                      height: video.value.size.height,
+                                      child: VideoPlayer(video),
+                                    ),
+                                  ),
+                                  Center(
+                                    child: IconButton.filled(
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor:
+                                            AppColors.studentPrimary,
+                                        fixedSize: const Size(72, 72),
+                                      ),
+                                      onPressed: () {
+                                        video.value.isPlaying
+                                            ? video.pause()
+                                            : video.play();
+                                      },
+                                      icon: Icon(
+                                        video.value.isPlaying
+                                            ? Icons.pause_rounded
+                                            : Icons.play_arrow_rounded,
+                                        size: 38,
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    left: 18,
+                                    right: 18,
+                                    bottom: 14,
+                                    child: Row(
+                                      children: [
+                                        Text(
+                                          _clock(video.value.position),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: LinearProgressIndicator(
+                                            value:
+                                                video.value.duration >
+                                                    Duration.zero
+                                                ? (video
+                                                          .value
+                                                          .position
+                                                          .inMilliseconds /
+                                                      video
+                                                          .value
+                                                          .duration
+                                                          .inMilliseconds)
+                                                : 0,
+                                            color: AppColors.studentAccent,
+                                            backgroundColor: Colors.white
+                                                .withValues(alpha: .28),
+                                            minHeight: 4,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(
+                                          _clock(video.value.duration),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : const Center(
+                                child: Text(
+                                  'Video ochilmadi',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [0.75, 1.0, 1.25, 1.5, 2.0].map((value) {
+                  final selected = (_speed - value).abs() < .01;
+                  final label = value == 1 ? '1x' : '${value}x';
+                  return ChoiceChip(
+                    selected: selected,
+                    label: Text(label),
+                    onSelected: (_) => _setSpeed(value),
+                    selectedColor: AppColors.studentPrimary,
+                    labelStyle: TextStyle(
+                      color: selected ? Colors.white : Colors.white70,
+                      fontWeight: FontWeight.w900,
+                    ),
+                    backgroundColor: Colors.white.withValues(alpha: .1),
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: .16),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoPosterOverlay extends StatelessWidget {
+  const _VideoPosterOverlay({
+    required this.title,
+    required this.topicLabel,
+    required this.progress,
+    required this.position,
+    required this.duration,
+    required this.playing,
+    required this.speedLabel,
+    required this.captionsEnabled,
+    required this.onPlay,
+    this.onSeek,
+    this.onSpeedTap,
+    this.onCaptionsTap,
+    required this.onOpenFull,
+  });
+
+  final String title;
+  final String topicLabel;
+  final double progress;
+  final String position;
+  final String duration;
+  final bool playing;
+  final String speedLabel;
+  final bool captionsEnabled;
+  final VoidCallback onPlay;
+  final ValueChanged<double>? onSeek;
+  final VoidCallback? onSpeedTap;
+  final VoidCallback? onCaptionsTap;
+  final VoidCallback? onOpenFull;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned(
+          left: 16,
+          top: 16,
+          right: 16,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  height: 1.16,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                'Klinik laboratoriya va uning vazifalari',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: .88),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  height: 1.32,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.studentPrimary,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Text(
+                  topicLabel,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Center(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onPlay,
+            child: Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .94),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .22),
+                    blurRadius: 22,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Icon(
+                playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: AppColors.studentPrimary,
+                size: 40,
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 11,
+          child: Column(
+            children: [
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 4,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 5,
+                  ),
+                  overlayShape: SliderComponentShape.noOverlay,
+                  activeTrackColor: AppColors.studentAccent,
+                  inactiveTrackColor: Colors.white.withValues(alpha: .34),
+                  thumbColor: Colors.white,
+                ),
+                child: Slider(
+                  value: progress.clamp(0.0, 1.0),
+                  onChanged: onSeek,
+                ),
+              ),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onPlay,
+                      child: Center(
+                        child: Icon(
+                          playing
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    '$position / $duration',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onSpeedTap,
+                    child: Container(
+                      height: 32,
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: .18),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        speedLabel,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 13),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onCaptionsTap,
+                    child: Container(
+                      height: 30,
+                      constraints: const BoxConstraints(minWidth: 34),
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: captionsEnabled
+                            ? AppColors.studentAccent
+                            : Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'CC',
+                        style: TextStyle(
+                          color: captionsEnabled
+                              ? Colors.white
+                              : const Color(0xFF111827),
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onOpenFull,
+                      child: const Center(
+                        child: Icon(
+                          Icons.fullscreen_rounded,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _VideoStatsPanel extends StatelessWidget {
+  const _VideoStatsPanel({
+    required this.duration,
+    required this.watchedPercent,
+    required this.lastPosition,
+  });
+
+  final Duration duration;
+  final int watchedPercent;
+  final Duration lastPosition;
+
+  String _clock(Duration value) {
+    final minutes = value.inMinutes;
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: .04)
+            : AppColors.studentPrimary.withValues(alpha: .035),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .13),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _VideoStatItem(
+              icon: Icons.schedule_rounded,
+              label: 'Davomiyligi',
+              value: '${_clock(duration)} min',
+            ),
+          ),
+          _VideoStatDivider(isDark: isDark),
+          Expanded(
+            child: _VideoStatItem(
+              icon: Icons.trending_up_rounded,
+              label: 'Ko‘rilgan',
+              value: '$watchedPercent%',
+            ),
+          ),
+          _VideoStatDivider(isDark: isDark),
+          Expanded(
+            child: _VideoStatItem(
+              icon: Icons.bookmark_border_rounded,
+              label: 'Oxirgi joy',
+              value: _clock(lastPosition),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _VideoStatDivider extends StatelessWidget {
+  const _VideoStatDivider({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 34,
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      color: (isDark ? Colors.white : const Color(0xFFCBD5E1)).withValues(
+        alpha: .6,
+      ),
+    );
+  }
+}
+
+class _VideoStatItem extends StatelessWidget {
+  const _VideoStatItem({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: AppColors.studentPrimary.withValues(alpha: .10),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: AppColors.studentPrimary, size: 18),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: .64)
+                      : const Color(0xFF64748B),
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isDark ? Colors.white : const Color(0xFF111827),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -4182,10 +7404,8 @@ class _VideoLessonScreen extends StatefulWidget {
 }
 
 class _VideoLessonScreenState extends State<_VideoLessonScreen> {
-  double _speed = 1;
-  bool _playing = false;
+  bool _showNotes = false;
   YoutubePlayerController? _youtubeController;
-  String? _youtubeVideoId;
 
   @override
   void initState() {
@@ -4209,11 +7429,11 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
   }
 
   void _configureYoutubePlayer() {
+    if (!kIsWeb) return;
     final videoId = YoutubePlayerController.convertUrlToId(
       widget.topic.videoUrl.trim(),
     );
     if (videoId == null) return;
-    _youtubeVideoId = videoId;
     _youtubeController = YoutubePlayerController.fromVideoId(
       videoId: videoId,
       autoPlay: false,
@@ -4228,12 +7448,6 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
   void _disposeYoutubePlayer() {
     _youtubeController?.close();
     _youtubeController = null;
-    _youtubeVideoId = null;
-  }
-
-  void _setPlaybackSpeed(double speed) {
-    setState(() => _speed = speed);
-    unawaited(_youtubeController?.setPlaybackRate(speed));
   }
 
   Future<void> _openVideo() async {
@@ -4253,12 +7467,75 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
     }
   }
 
+  Duration get _lessonDuration {
+    final materialDuration = widget.topic.videoMaterials
+        .where((item) => item.duration > Duration.zero)
+        .map((item) => item.duration)
+        .firstOrNull;
+    if (materialDuration != null) return materialDuration;
+    if (widget.topic.duration > Duration.zero) return widget.topic.duration;
+    return const Duration(minutes: 12, seconds: 45);
+  }
+
+  String _clock(Duration value) {
+    final minutes = value.inMinutes.toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  List<(Duration, String)> _chapters() {
+    if (widget.topic.videoChapters.isNotEmpty) {
+      return widget.topic.videoChapters
+          .map((chapter) => (chapter.time, chapter.title))
+          .toList(growable: false);
+    }
+
+    final materialChapters =
+        widget.topic.videoMaterials
+            .expand((material) => material.chapters)
+            .toList()
+          ..sort((a, b) => a.time.compareTo(b.time));
+    if (materialChapters.isNotEmpty) {
+      return materialChapters
+          .map((chapter) => (chapter.time, chapter.title))
+          .toList(growable: false);
+    }
+
+    final summaryLines = widget.topic.summary
+        .split(RegExp(r'[\n•\-]+'))
+        .map((line) => line.trim())
+        .where((line) => line.length > 3)
+        .take(4)
+        .toList();
+    final labels = summaryLines.isEmpty
+        ? <String>[
+            'Kirish',
+            'Klinik laboratoriya ta’rifi',
+            'Asosiy vazifalar',
+            'Bo‘limlar',
+            'Xulosa',
+          ]
+        : <String>['Kirish', ...summaryLines, 'Xulosa'];
+    final duration = _lessonDuration;
+    final step = duration.inMilliseconds <= 0
+        ? const Duration(minutes: 2)
+        : Duration(
+            milliseconds: (duration.inMilliseconds / labels.length).floor(),
+          );
+    return [
+      for (var index = 0; index < labels.length; index += 1)
+        (step * index, labels[index]),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final topic = widget.topic;
-    final progress = _playing ? .45 : .2;
     final youtubeController = _youtubeController;
+    final youtubeVideoId = YoutubePlayerController.convertUrlToId(
+      topic.videoUrl.trim(),
+    );
 
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final borderCol = isDark
@@ -4273,11 +7550,20 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _MobileHeader(
-          title: topic.title,
-          subtitle: _t(context, 'video_lesson'),
+          title: _t(context, 'video_lesson'),
+          subtitle: topic.title,
           onBack: widget.onBack,
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 18),
+        Text(
+          topic.title,
+          style: TextStyle(
+            color: textColor,
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 14),
         Container(
           clipBehavior: Clip.hardEdge,
           decoration: BoxDecoration(
@@ -4295,266 +7581,195 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              youtubeController == null
-                  ? Container(
-                      height: 210,
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? const Color(0xFF1E293B).withValues(alpha: 0.3)
-                            : const Color(0xFFF8FAFC),
-                      ),
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: CustomPaint(painter: _CircuitPainter()),
-                          ),
-                          Center(
-                            child: IconButton(
-                              tooltip: _playing ? 'Pause' : 'Play',
-                              onPressed: () =>
-                                  setState(() => _playing = !_playing),
-                              style: IconButton.styleFrom(
-                                backgroundColor: const Color(0xFF6C4DFF),
-                                foregroundColor: Colors.white,
-                                fixedSize: const Size(64, 64),
-                                shadowColor: const Color(
-                                  0xFF6C4DFF,
-                                ).withValues(alpha: 0.3),
-                                elevation: 8,
-                                shape: const CircleBorder(),
-                              ),
-                              icon: Icon(
-                                _playing
-                                    ? Icons.pause_rounded
-                                    : Icons.play_arrow_rounded,
-                                size: 36,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            left: 14,
-                            right: 14,
-                            bottom: 14,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: cardBg.withValues(alpha: 0.85),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: borderCol),
-                              ),
-                              child: Row(
-                                children: [
-                                  Text(
-                                    '00:00',
-                                    style: TextStyle(
-                                      color: textColor,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Container(
-                                      height: 4,
-                                      decoration: BoxDecoration(
-                                        color: isDark
-                                            ? const Color(0xFF334155)
-                                            : const Color(0xFFE2E8F0),
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
-                                      child: Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: FractionallySizedBox(
-                                          widthFactor: progress,
-                                          child: Container(
-                                            height: 4,
-                                            decoration: BoxDecoration(
-                                              color: const Color(0xFF6C4DFF),
-                                              borderRadius:
-                                                  BorderRadius.circular(2),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Text(
-                                    '${topic.duration.inMinutes}:${(topic.duration.inSeconds % 60).toString().padLeft(2, '0')}',
-                                    style: TextStyle(
-                                      color: textColor,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : YoutubePlayer(
-                      controller: youtubeController,
-                      aspectRatio: 16 / 9,
-                    ),
               Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       topic.videoTitle.isEmpty
-                          ? 'Video dars'
+                          ? 'Video darslik'
                           : topic.videoTitle,
                       style: TextStyle(
                         color: textColor,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      youtubeController == null
-                          ? _t(context, 'video_external_hint')
-                          : _t(context, 'video_inapp_hint'),
-                      style: TextStyle(
-                        color: mutedTextColor,
-                        fontSize: 13,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      _t(context, 'playback_speed'),
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: textColor,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final speed in const [.75, 1.0, 1.25, 1.5])
-                          ChoiceChip(
-                            label: Text(
-                              '${speed}x',
-                              style: TextStyle(
-                                color: _speed == speed
-                                    ? const Color(0xFF6C4DFF)
-                                    : textColor,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            selected: _speed == speed,
-                            onSelected: (_) => _setPlaybackSpeed(speed),
-                            selectedColor: const Color(
-                              0xFF6C4DFF,
-                            ).withValues(alpha: 0.12),
-                            checkmarkColor: const Color(0xFF6C4DFF),
-                            side: BorderSide(
-                              color: _speed == speed
-                                  ? const Color(
-                                      0xFF6C4DFF,
-                                    ).withValues(alpha: 0.3)
-                                  : borderCol,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    if (youtubeController == null)
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _openVideo,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF6C4DFF),
-                            side: const BorderSide(
-                              color: Color(0xFF6C4DFF),
-                              width: 1.5,
-                            ),
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          icon: const Icon(Icons.open_in_new_rounded),
-                          label: Text(
-                            _t(context, 'open_external_video'),
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                      )
-                    else
+                        child: youtubeController == null
+                            ? AspectRatio(
+                                aspectRatio: 16 / 9,
+                                child: _VideoLaunchPreview(
+                                  videoId: youtubeVideoId,
+                                  onOpen: _openVideo,
+                                  title: topic.videoTitle.isEmpty
+                                      ? topic.title
+                                      : topic.videoTitle,
+                                ),
+                              )
+                            : YoutubePlayer(
+                                controller: youtubeController,
+                                aspectRatio: 16 / 9,
+                              ),
+                      ),
+                    ),
+                    if (!kIsWeb && youtubeVideoId != null) ...[
+                      const SizedBox(height: 10),
                       Container(
+                        width: double.infinity,
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
+                          horizontal: 12,
+                          vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(
-                            0xFF6C4DFF,
-                          ).withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: const Color(
-                              0xFF6C4DFF,
-                            ).withValues(alpha: 0.2),
+                          color: AppColors.studentPrimary.withValues(
+                            alpha: .08,
                           ),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
-                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(
-                              Icons.play_circle_outline_rounded,
-                              color: Color(0xFF6C4DFF),
-                              size: 20,
+                            Icon(
+                              Icons.info_outline_rounded,
+                              color: AppColors.studentPrimary,
+                              size: 18,
                             ),
                             const SizedBox(width: 8),
-                            Text(
-                              'YouTube ID: $_youtubeVideoId',
-                              style: const TextStyle(
-                                color: Color(0xFF6C4DFF),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
+                            Expanded(
+                              child: Text(
+                                'Video YouTube ilovasida ochiladi.',
+                                style: TextStyle(
+                                  color: mutedTextColor,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12,
+                                ),
                               ),
                             ),
                           ],
                         ),
                       ),
+                    ],
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _VideoLessonTabButton(
+                            label: 'Mavzu bo‘limlari',
+                            selected: !_showNotes,
+                            onPressed: () => setState(() => _showNotes = false),
+                          ),
+                        ),
+                        Expanded(
+                          child: _VideoLessonTabButton(
+                            label: 'Izohlar',
+                            selected: _showNotes,
+                            onPressed: () => setState(() => _showNotes = true),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: _showNotes
+                          ? _VideoLessonNotes(
+                              key: const ValueKey('video-notes'),
+                              text: topic.summary,
+                              textColor: textColor,
+                              mutedTextColor: mutedTextColor,
+                              borderColor: borderCol,
+                            )
+                          : _VideoLessonChapters(
+                              key: const ValueKey('video-chapters'),
+                              chapters: _chapters(),
+                              activeColor: AppColors.studentPrimary,
+                              textColor: textColor,
+                              mutedTextColor: mutedTextColor,
+                            ),
+                    ),
                   ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+                child: InkWell(
+                  onTap: _openVideo,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.studentPrimary.withValues(alpha: .06),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: AppColors.studentPrimary.withValues(alpha: .12),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.schedule_rounded,
+                          size: 18,
+                          color: AppColors.studentPrimary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _clock(_lessonDuration),
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'Video ko‘rish',
+                          style: TextStyle(
+                            color: AppColors.studentPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.open_in_new_rounded,
+                          color: AppColors.studentPrimary,
+                          size: 16,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 32),
+        const SizedBox(height: 20),
         SizedBox(
           width: double.infinity,
-          child: FilledButton.icon(
+          child: FilledButton(
             onPressed: widget.onComplete,
             style: FilledButton.styleFrom(
-              backgroundColor: AppColors.successGreen,
+              backgroundColor: AppColors.studentPrimary,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: 15),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(14),
               ),
             ),
-            icon: const Icon(Icons.check_circle_rounded),
-            label: Text(
-              _t(context, 'finish_video'),
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            child: const Text(
+              'Video dars tugallandi',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
             ),
           ),
         ),
@@ -4564,8 +7779,294 @@ class _VideoLessonScreenState extends State<_VideoLessonScreen> {
   }
 }
 
+class _VideoLaunchPreview extends StatelessWidget {
+  const _VideoLaunchPreview({
+    required this.videoId,
+    required this.onOpen,
+    required this.title,
+  });
+
+  final String? videoId;
+  final VoidCallback onOpen;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumbnailUrl = videoId == null
+        ? null
+        : 'https://img.youtube.com/vi/$videoId/hqdefault.jpg';
+
+    return Material(
+      color: Colors.black,
+      child: InkWell(
+        onTap: onOpen,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (thumbnailUrl != null)
+              Image.network(
+                thumbnailUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: .15),
+                    Colors.black.withValues(alpha: .72),
+                  ],
+                ),
+              ),
+            ),
+            Center(
+              child: Container(
+                width: 76,
+                height: 76,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF0033),
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: .25),
+                      blurRadius: 22,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 46,
+                ),
+              ),
+            ),
+            Positioned(
+              left: 14,
+              right: 14,
+              bottom: 14,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: .2),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.open_in_new_rounded,
+                          color: Colors.white,
+                          size: 15,
+                        ),
+                        SizedBox(width: 5),
+                        Text(
+                          'YouTube',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoLessonTabButton extends StatelessWidget {
+  const _VideoLessonTabButton({
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: selected
+            ? AppColors.studentPrimary
+            : AppColors.studentMuted,
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        shape: const RoundedRectangleBorder(),
+      ),
+      child: Column(
+        children: [
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 7),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            height: 2.5,
+            width: selected ? 82 : 0,
+            decoration: BoxDecoration(
+              color: AppColors.studentPrimary,
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VideoLessonChapters extends StatelessWidget {
+  const _VideoLessonChapters({
+    super.key,
+    required this.chapters,
+    required this.activeColor,
+    required this.textColor,
+    required this.mutedTextColor,
+  });
+
+  final List<(Duration, String)> chapters;
+  final Color activeColor;
+  final Color textColor;
+  final Color mutedTextColor;
+
+  String _clock(Duration value) {
+    final minutes = value.inMinutes.toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < chapters.length; index += 1)
+          Padding(
+            padding: EdgeInsets.only(
+              bottom: index == chapters.length - 1 ? 0 : 10,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 46,
+                  child: Text(
+                    _clock(chapters[index].$1),
+                    style: TextStyle(
+                      color: index == 0 ? activeColor : mutedTextColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    chapters[index].$2,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 12,
+                      fontWeight: index == 0
+                          ? FontWeight.w900
+                          : FontWeight.w700,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _VideoLessonNotes extends StatelessWidget {
+  const _VideoLessonNotes({
+    super.key,
+    required this.text,
+    required this.textColor,
+    required this.mutedTextColor,
+    required this.borderColor,
+  });
+
+  final String text;
+  final Color textColor;
+  final Color mutedTextColor;
+  final Color borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final note = text.trim().isEmpty
+        ? 'Bu video dars uchun izohlar hali kiritilmagan.'
+        : text.trim();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor),
+      ),
+      child: Text(
+        note,
+        style: TextStyle(
+          color: note == text.trim() ? textColor : mutedTextColor,
+          fontSize: 12,
+          height: 1.45,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+extension _FirstOrNullExtension<T> on Iterable<T> {
+  T? get firstOrNull {
+    final iterator = this.iterator;
+    if (iterator.moveNext()) return iterator.current;
+    return null;
+  }
+}
+
 class _TopicQuizScreen extends StatelessWidget {
   const _TopicQuizScreen({
+    required this.topicTitle,
     required this.questions,
     required this.questionIndex,
     required this.selectedOption,
@@ -4575,6 +8076,7 @@ class _TopicQuizScreen extends StatelessWidget {
     required this.onBack,
   });
 
+  final String topicTitle;
   final List<QuizQuestion> questions;
   final int questionIndex;
   final int selectedOption;
@@ -4588,6 +8090,16 @@ class _TopicQuizScreen extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final safeIndex = questionIndex.clamp(0, questions.length - 1).toInt();
     final question = questions[safeIndex];
+    final questionKind = question.isVideoQuestion
+        ? ('Video savol', Icons.videocam_rounded)
+        : question.isImageQuestion
+        ? ('Rasmli savol', Icons.image_rounded)
+        : ('Matnli savol', Icons.article_rounded);
+    final rawTitle = topicTitle.trim();
+    final displayTitle = rawTitle.isEmpty ? 'Mavzu testi' : rawTitle;
+    final quizTitle = displayTitle.toLowerCase().contains('test')
+        ? displayTitle
+        : '$displayTitle testi';
 
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final borderCol = isDark
@@ -4602,8 +8114,8 @@ class _TopicQuizScreen extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _MobileHeader(
-          title: '${question.topic} testi',
-          subtitle: _t(context, 'topic_quiz'),
+          title: quizTitle,
+          subtitle: '${safeIndex + 1}-savol / ${questions.length} ta',
           onBack: onBack,
           trailing: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -4631,12 +8143,12 @@ class _TopicQuizScreen extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 18),
         Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: cardBg,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(color: borderCol, width: 1.5),
             boxShadow: [
               BoxShadow(
@@ -4694,10 +8206,53 @@ class _TopicQuizScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.studentPrimary.withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: AppColors.studentPrimary.withValues(alpha: .14),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      questionKind.$2,
+                      size: 15,
+                      color: AppColors.studentPrimary,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      questionKind.$1,
+                      style: const TextStyle(
+                        color: AppColors.studentPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                question.question,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  height: 1.35,
+                ),
+              ),
+              const SizedBox(height: 16),
               if (question.hasMedia) ...[
                 _QuestionMediaBlock(question: question),
-                const SizedBox(height: 24),
+                const SizedBox(height: 18),
               ] else if (question.assetLabel != null) ...[
                 Container(
                   width: double.infinity,
@@ -4723,18 +8278,8 @@ class _TopicQuizScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 18),
               ],
-              Text(
-                question.question,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 32),
               ...List.generate(
                 question.options.length,
                 (index) => Padding(
@@ -4750,12 +8295,13 @@ class _TopicQuizScreen extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 32),
+        const SizedBox(height: 22),
         Row(
           children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: onPrevious,
+            SizedBox(
+              width: 56,
+              child: OutlinedButton(
+                onPressed: safeIndex == 0 ? null : onPrevious,
                 style: OutlinedButton.styleFrom(
                   foregroundColor: isDark
                       ? Colors.white
@@ -4766,14 +8312,43 @@ class _TopicQuizScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                icon: const Icon(Icons.arrow_back_rounded, size: 20),
-                label: Text(
-                  _t(context, 'previous'),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                child: const Icon(Icons.arrow_back_rounded, size: 20),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextButton.icon(
+                onPressed: () {
+                  final explanation = question.explanation.trim();
+                  ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
+                  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        explanation.isEmpty
+                            ? 'Bu savol uchun izoh hali kiritilmagan.'
+                            : explanation,
+                      ),
+                    ),
+                  );
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF64748B),
+                  backgroundColor: isDark
+                      ? Colors.white.withValues(alpha: .04)
+                      : const Color(0xFFF8FAFC),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: const Text(
+                  'Izoh',
+                  style: TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 10),
             Expanded(
               child: FilledButton.icon(
                 onPressed: onNext,
@@ -4806,7 +8381,7 @@ class _TopicQuizScreen extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 32),
+        SizedBox(height: MediaQuery.paddingOf(context).bottom + 96),
       ],
     );
   }
@@ -4833,35 +8408,59 @@ class _OptionTile extends StatelessWidget {
         ? const Color(0xFF1E293B)
         : const Color(0xFFE2E8F0);
     final cardBg = isDark ? const Color(0xFF0F172A) : Colors.white;
+    final selectedColor = const Color(0xFF6C4DFF);
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
+      duration: const Duration(milliseconds: 180),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             decoration: BoxDecoration(
-              color: selected
-                  ? const Color(0xFF6C4DFF).withValues(alpha: 0.12)
-                  : cardBg,
-              borderRadius: BorderRadius.circular(16),
+              color: selected ? null : cardBg,
+              gradient: selected
+                  ? LinearGradient(
+                      colors: [
+                        selectedColor.withValues(alpha: .18),
+                        selectedColor.withValues(alpha: .08),
+                      ],
+                    )
+                  : null,
+              borderRadius: BorderRadius.circular(18),
               border: Border.all(
-                color: selected ? const Color(0xFF6C4DFF) : borderCol,
+                color: selected ? selectedColor : borderCol,
                 width: selected ? 2.0 : 1.5,
               ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: selectedColor.withValues(alpha: .14),
+                        blurRadius: 18,
+                        offset: const Offset(0, 10),
+                      ),
+                    ]
+                  : null,
             ),
             child: Row(
               children: [
                 Container(
-                  width: 32,
-                  height: 32,
+                  width: 36,
+                  height: 36,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
+                    gradient: selected
+                        ? const LinearGradient(
+                            colors: [
+                              AppColors.studentPrimary,
+                              AppColors.studentAccent,
+                            ],
+                          )
+                        : null,
                     color: selected
-                        ? const Color(0xFF6C4DFF)
+                        ? null
                         : (isDark
                               ? const Color(0xFF1E293B)
                               : const Color(0xFFF1F5F9)),
@@ -4872,7 +8471,7 @@ class _OptionTile extends StatelessWidget {
                     style: TextStyle(
                       color: selected
                           ? Colors.white
-                          : (isDark ? Colors.white70 : const Color(0xFF6C4DFF)),
+                          : (isDark ? Colors.white70 : selectedColor),
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                     ),
@@ -4883,8 +8482,8 @@ class _OptionTile extends StatelessWidget {
                   child: Text(
                     text,
                     style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+                      fontSize: 15.5,
+                      fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
                       color: textColor,
                     ),
                   ),
@@ -4907,21 +8506,54 @@ class _QuestionMediaBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = question.mediaUrl.trim();
     if (question.isImageQuestion) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: Image.network(
-          url,
-          width: double.infinity,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => _mediaFallback(
-            Icons.image_not_supported_rounded,
-            'Rasm ochilmadi',
+      return Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: SizedBox(
+              width: double.infinity,
+              height: 190,
+              child: Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => _mediaFallback(
+                  Icons.image_not_supported_rounded,
+                  'Rasm ochilmadi',
+                ),
+              ),
+            ),
           ),
-        ),
+          Positioned(
+            right: 10,
+            bottom: 10,
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .92),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.fullscreen_rounded,
+                color: AppColors.studentPrimary,
+              ),
+            ),
+          ),
+        ],
       );
     }
     if (question.isVideoQuestion) {
-      return _InlineVideoPlayer(url: url, title: 'Savol videosi');
+      return _InlineVideoPlayer(
+        url: url,
+        title: question.question.trim().isEmpty
+            ? 'Savol videosi'
+            : question.question,
+        duration: Duration.zero,
+        watchedPercent: 0,
+        topicLabel: 'SAVOL',
+        compact: true,
+        showStats: false,
+      );
     }
     return _mediaFallback(Icons.attach_file_rounded, url);
   }
@@ -4950,12 +8582,16 @@ class _QuizResultScreen extends StatelessWidget {
   const _QuizResultScreen({
     required this.topic,
     required this.score,
+    required this.answers,
+    required this.canOpenFinalExam,
     required this.onContinue,
     required this.onFinalExam,
   });
 
   final TopicLesson topic;
   final int score;
+  final Map<int, int> answers;
+  final bool canOpenFinalExam;
   final VoidCallback onContinue;
   final VoidCallback onFinalExam;
 
@@ -5068,13 +8704,62 @@ class _QuizResultScreen extends StatelessWidget {
                     ),
                     const Divider(height: 16),
                     const _ResultStat(
-                      label: 'Natija manbasi',
-                      value: 'Supabase',
+                      label: 'Hisoblash usuli',
+                      value: 'Avtomatik',
                     ),
                     const Divider(height: 16),
-                    const _ResultStat(
+                    _ResultStat(
                       label: 'Keyingi bosqich',
-                      value: 'Mavzular',
+                      value: isSuccess && canOpenFinalExam
+                          ? 'Yakuniy test'
+                          : 'Mavzular ro‘yxati',
+                    ),
+                  ],
+                ),
+              ),
+              if (topic.quizQuestions.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                _QuestionAnalysisPanel(
+                  questions: topic.quizQuestions,
+                  answers: answers,
+                ),
+              ],
+              const SizedBox(height: 18),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.amber.withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppColors.amber.withValues(alpha: .22),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: .70),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.star_rounded,
+                        color: AppColors.amber,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        isSuccess
+                            ? '+20 XP hisobingizga qo‘shildi'
+                            : '70% va undan yuqori natija bilan XP olasiz',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -5102,7 +8787,7 @@ class _QuizResultScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              if (isSuccess) ...[
+              if (isSuccess && canOpenFinalExam) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
@@ -5134,6 +8819,244 @@ class _QuizResultScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _QuestionAnalysisPanel extends StatelessWidget {
+  const _QuestionAnalysisPanel({
+    required this.questions,
+    required this.answers,
+  });
+
+  final List<QuizQuestion> questions;
+  final Map<int, int> answers;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = isDark
+        ? const Color(0xFF1E293B)
+        : const Color(0xFFE2E8F0);
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: isDark
+            ? Colors.white.withValues(alpha: .035)
+            : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(14, 14, 14, 8),
+            child: Text(
+              'Savollar tahlili',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            ),
+          ),
+          for (var index = 0; index < questions.length; index++)
+            _QuestionAnalysisRow(
+              index: index,
+              question: questions[index],
+              selectedIndex: answers[index],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuestionAnalysisRow extends StatefulWidget {
+  const _QuestionAnalysisRow({
+    required this.index,
+    required this.question,
+    required this.selectedIndex,
+  });
+
+  final int index;
+  final QuizQuestion question;
+  final int? selectedIndex;
+
+  @override
+  State<_QuestionAnalysisRow> createState() => _QuestionAnalysisRowState();
+}
+
+class _QuestionAnalysisRowState extends State<_QuestionAnalysisRow>
+    with SingleTickerProviderStateMixin {
+  bool _expanded = false;
+
+  bool get _isCorrect => widget.selectedIndex == widget.question.correctIndex;
+
+  String _optionLabel(int index) => String.fromCharCode(65 + index);
+
+  String _optionValue(int? optionIndex) {
+    if (optionIndex == null ||
+        optionIndex < 0 ||
+        optionIndex >= widget.question.options.length) {
+      return 'Javob tanlanmagan';
+    }
+    return '${_optionLabel(optionIndex)}. ${widget.question.options[optionIndex]}';
+  }
+
+  String _explanationText() {
+    final customExplanation = widget.question.explanation.trim();
+    final correctAnswer = _optionValue(widget.question.correctIndex);
+    final selectedAnswer = _optionValue(widget.selectedIndex);
+
+    if (_isCorrect) {
+      if (customExplanation.isNotEmpty) {
+        return 'To‘g‘ri javob: $correctAnswer.\n$customExplanation';
+      }
+      return 'Siz to‘g‘ri javobni tanlagansiz: $correctAnswer. Bu javob mavzu mazmuniga mos keladi.';
+    }
+
+    if (customExplanation.isNotEmpty) {
+      return 'Sizning javobingiz: $selectedAnswer.\nTo‘g‘ri javob: $correctAnswer.\n$customExplanation';
+    }
+    return 'Sizning javobingiz: $selectedAnswer. To‘g‘ri javob: $correctAnswer. Shu savol bo‘yicha mavzudagi asosiy izohni qayta ko‘rib chiqing.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final kindIcon = widget.question.isVideoQuestion
+        ? Icons.videocam_rounded
+        : widget.question.isImageQuestion
+        ? Icons.image_rounded
+        : Icons.article_rounded;
+    final kindLabel = widget.question.isVideoQuestion
+        ? 'Video savol'
+        : widget.question.isImageQuestion
+        ? 'Rasmli savol'
+        : 'Matnli savol';
+    final answerColor = _isCorrect
+        ? AppColors.successGreen
+        : AppColors.errorRed;
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: .10),
+          ),
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: AppColors.studentPrimary.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        kindIcon,
+                        size: 16,
+                        color: AppColors.studentPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${widget.index + 1}-savol',
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            kindLabel,
+                            style: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withValues(alpha: .58),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: .42),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      _isCorrect
+                          ? Icons.check_circle_rounded
+                          : Icons.cancel_rounded,
+                      color: answerColor,
+                    ),
+                  ],
+                ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  child: !_expanded
+                      ? const SizedBox.shrink()
+                      : Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(top: 12),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: .055)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: answerColor.withValues(alpha: .22),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _isCorrect ? 'Nega to‘g‘ri?' : 'Nega xato?',
+                                style: TextStyle(
+                                  color: answerColor,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                _explanationText(),
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: .72),
+                                  fontSize: 13,
+                                  height: 1.35,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -5911,23 +9834,31 @@ class _CommunityScreen extends StatelessWidget {
                 onPressed: () => unawaited(onRefresh()),
                 icon: const Icon(Icons.refresh_rounded),
                 style: IconButton.styleFrom(
+                  fixedSize: const Size.square(52),
+                  padding: EdgeInsets.zero,
                   backgroundColor: isDark
                       ? Colors.white.withValues(alpha: .06)
                       : Colors.black.withValues(alpha: .04),
                   foregroundColor: isDark
                       ? Colors.white
                       : const Color(0xFF0F172A),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
+                  shape: const CircleBorder(),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 16),
               Badge.count(
                 isLabelVisible: notificationCount > 0,
                 count: notificationCount,
                 child: IconButton(
                   onPressed: onNotifications,
+                  style: IconButton.styleFrom(
+                    fixedSize: const Size.square(52),
+                    padding: EdgeInsets.zero,
+                    backgroundColor: isDark
+                        ? Colors.white.withValues(alpha: .06)
+                        : Colors.black.withValues(alpha: .04),
+                    shape: const CircleBorder(),
+                  ),
                   icon: Icon(
                     Icons.notifications_none_rounded,
                     color: isDark ? Colors.white : const Color(0xFF0F172A),
@@ -6207,6 +10138,24 @@ class _ProgressScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final overallPercent = (data.overallProgress * 100).round();
+    final totalTopics = data.modules.fold<int>(
+      0,
+      (sum, module) => sum + module.topics.length,
+    );
+    final completedTopics = data.modules.fold<int>(
+      0,
+      (sum, module) =>
+          sum +
+          module.topics
+              .where((topic) => topic.status == TopicStatus.completed)
+              .length,
+    );
+    final passedModules = data.modules
+        .where((module) => module.isPassed)
+        .length;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final mutedColor = dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final cardColor = Theme.of(context).cardColor;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -6217,125 +10166,118 @@ class _ProgressScreen extends StatelessWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton.filledTonal(
+              _ProgressCircleAction(
                 tooltip: 'Yangilash',
                 onPressed: () => unawaited(onRefresh()),
                 icon: const Icon(Icons.refresh_rounded),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 16),
               Badge.count(
                 isLabelVisible: notificationCount > 0,
                 count: notificationCount,
-                child: IconButton(
+                child: _ProgressCircleAction(
+                  tooltip: 'Bildirishnomalar',
                   onPressed: onNotifications,
-                  icon: Icon(
-                    Icons.notifications_none_rounded,
-                    color: Theme.of(context).brightness == Brightness.dark
-                        ? Colors.white
-                        : const Color(0xFF0F172A),
-                    size: 28,
-                  ),
+                  icon: const Icon(Icons.notifications_none_rounded),
                 ),
               ),
             ],
           ),
         ),
         const SizedBox(height: 18),
-        _JourneyNoteCard(
-          title: 'Progress logikasi',
-          subtitle:
-              'Progress faqat kirilgan ekran bilan emas, bosqichlar yakunlanganda oshadi.',
-          accent: AppColors.amber,
-          items: const [
-            _JourneyItem('PDF tugashi', Icons.picture_as_pdf_rounded),
-            _JourneyItem('Video tugashi', Icons.play_circle_outline_rounded),
-            _JourneyItem('Quiz', Icons.quiz_outlined),
-            _JourneyItem(
-              'Final / Sertifikat',
-              Icons.workspace_premium_outlined,
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
         Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(32),
+            color: cardColor,
+            borderRadius: BorderRadius.circular(30),
             border: Border.all(
-              color: AppColors.studentPrimary.withValues(alpha: 0.1),
+              color: AppColors.studentPrimary.withValues(alpha: 0.12),
             ),
             boxShadow: [
               BoxShadow(
-                color: AppColors.studentPrimary.withValues(alpha: 0.05),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
+                color: AppColors.studentPrimary.withValues(alpha: 0.08),
+                blurRadius: 28,
+                offset: const Offset(0, 14),
               ),
             ],
           ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   CircularScore(
                     value: data.overallProgress,
                     label:
-                        '${data.completedModules} / ${data.modules.length} modul',
-                    size: 100,
+                        '${data.completedModules}/${data.modules.length} modul',
+                    size: 112,
                     color: AppColors.studentPrimary,
                   ),
-                  const SizedBox(width: 24),
+                  const SizedBox(width: 22),
                   Expanded(
                     child: Column(
                       children: [
-                        _ProfileStat(
-                          icon: Icons.flag_rounded,
-                          label: 'Umumiy progress',
+                        _ProgressMetricRow(
+                          icon: Icons.trending_up_rounded,
+                          label: 'Umumiy',
                           value: '$overallPercent%',
+                          color: AppColors.studentPrimary,
                         ),
-                        const SizedBox(height: 12),
-                        _ProfileStat(
+                        const SizedBox(height: 10),
+                        _ProgressMetricRow(
                           icon: Icons.menu_book_rounded,
-                          label: 'Faol modullar',
-                          value: data.activeModuleCount.toString(),
+                          label: 'Mavzular',
+                          value: '$completedTopics/$totalTopics',
+                          color: AppColors.studentBlue,
                         ),
-                        const SizedBox(height: 12),
-                        _ProfileStat(
+                        const SizedBox(height: 10),
+                        _ProgressMetricRow(
                           icon: Icons.workspace_premium_rounded,
-                          label: 'Sertifikatlar',
+                          label: 'Sertifikat',
                           value: data.certificateCount.toString(),
+                          color: AppColors.amber,
                         ),
                       ],
                     ),
                   ),
                 ],
               ),
-              if (data.modules.isNotEmpty) ...[
-                const SizedBox(height: 24),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).scaffoldBackgroundColor,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: AppColors.studentPrimary.withValues(alpha: .15),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ProgressCompactTile(
+                      icon: Icons.school_rounded,
+                      label: 'Faol',
+                      value: data.activeModuleCount.toString(),
+                      color: AppColors.studentPrimary,
                     ),
                   ),
-                  child: Text(
-                    'Real progress mavzular bajarilishi, yakuniy test va sertifikatlar bilan birga hisoblanadi.',
-                    style: TextStyle(
-                      color: Theme.of(context).textTheme.bodySmall?.color,
-                      fontSize: 13,
-                      height: 1.4,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _ProgressCompactTile(
+                      icon: Icons.check_circle_rounded,
+                      label: 'Yopildi',
+                      value: passedModules.toString(),
+                      color: AppColors.successGreen,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _ProgressCompactTile(
+                      icon: Icons.emoji_events_rounded,
+                      label: 'Yutuq',
+                      value: data.completedModules.toString(),
+                      color: AppColors.amber,
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 22),
         if (data.modules.isEmpty)
           _EmptyStateCard(
             icon: Icons.track_changes_outlined,
@@ -6345,20 +10287,49 @@ class _ProgressScreen extends StatelessWidget {
             actionLabel: 'Yangilash',
             onAction: () => unawaited(onRefresh()),
           )
-        else
+        else ...[
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Modullar',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              ),
+              Text(
+                '${data.modules.length} ta',
+                style: TextStyle(
+                  color: mutedColor,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           ...data.modules.map(
             (module) => Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Container(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).cardColor,
-                  borderRadius: BorderRadius.circular(24),
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(28),
                   border: Border.all(
                     color: module.isPassed
                         ? AppColors.successGreen.withValues(alpha: 0.2)
                         : AppColors.studentPrimary.withValues(alpha: 0.1),
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: dark ? .18 : .04),
+                      blurRadius: 18,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -6366,14 +10337,15 @@ class _ProgressScreen extends StatelessWidget {
                     Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.all(12),
+                          width: 58,
+                          height: 58,
                           decoration: BoxDecoration(
                             color: module.isPassed
                                 ? AppColors.successGreen.withValues(alpha: 0.1)
                                 : AppColors.studentPrimary.withValues(
                                     alpha: 0.1,
                                   ),
-                            borderRadius: BorderRadius.circular(16),
+                            shape: BoxShape.circle,
                           ),
                           child: Icon(
                             module.isPassed
@@ -6385,51 +10357,96 @@ class _ProgressScreen extends StatelessWidget {
                             size: 24,
                           ),
                         ),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: 14),
                         Expanded(
-                          child: Text(
-                            '${module.order}-modul: ${module.title}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${module.order}-modul',
+                                style: TextStyle(
+                                  color: mutedColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                module.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.15,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        Text(
-                          '${(module.progress * 100).round()}%',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: module.isPassed
-                                ? AppColors.successGreen
-                                : AppColors.studentPrimary,
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                (module.isPassed
+                                        ? AppColors.successGreen
+                                        : AppColors.studentPrimary)
+                                    .withValues(alpha: .10),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${(module.progress * 100).round()}%',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: module.isPassed
+                                  ? AppColors.successGreen
+                                  : AppColors.studentPrimary,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 18),
                     ProgressLine(
                       value: module.progress,
                       color: module.isPassed
                           ? AppColors.successGreen
                           : AppColors.studentPrimary,
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      module.isPassed
-                          ? 'Modul yakunlandi va keyingi blok ochilgan.'
-                          : '${module.topics.where((topic) => topic.status == TopicStatus.completed).length} ta mavzu tugallangan, final test kutilmoqda.',
-                      style: TextStyle(
-                        color: Theme.of(context).textTheme.bodySmall?.color,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        _ProgressPill(
+                          icon: Icons.task_alt_rounded,
+                          label:
+                              '${module.topics.where((topic) => topic.status == TopicStatus.completed).length}/${module.topics.length} mavzu',
+                          color: AppColors.studentPrimary,
+                        ),
+                        const SizedBox(width: 8),
+                        _ProgressPill(
+                          icon: module.isPassed
+                              ? Icons.verified_rounded
+                              : Icons.lock_clock_rounded,
+                          label: module.isPassed
+                              ? 'Yakunlandi'
+                              : 'Davom etmoqda',
+                          color: module.isPassed
+                              ? AppColors.successGreen
+                              : AppColors.amber,
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
             ),
           ),
+        ],
         const SizedBox(height: 8),
         Row(
           children: [
@@ -6453,6 +10470,209 @@ class _ProgressScreen extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _ProgressCircleAction extends StatelessWidget {
+  const _ProgressCircleAction({
+    required this.icon,
+    required this.onPressed,
+    required this.tooltip,
+  });
+
+  final Widget icon;
+  final VoidCallback onPressed;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    return Tooltip(
+      message: tooltip,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: dark
+              ? Colors.white.withValues(alpha: .08)
+              : AppColors.studentPrimary.withValues(alpha: .10),
+          shape: BoxShape.circle,
+        ),
+        child: SizedBox.square(
+          dimension: 52,
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onPressed,
+              child: IconTheme(
+                data: IconThemeData(
+                  color: dark ? Colors.white : const Color(0xFF0F172A),
+                  size: 28,
+                ),
+                child: Center(child: icon),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProgressMetricRow extends StatelessWidget {
+  const _ProgressMetricRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final muted = dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .12),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, size: 18, color: color),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: muted,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+            color: dark ? Colors.white : const Color(0xFF0F172A),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProgressCompactTile extends StatelessWidget {
+  const _ProgressCompactTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: dark
+            ? Colors.white.withValues(alpha: .04)
+            : color.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: .14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 10),
+          Text(
+            value,
+            style: TextStyle(
+              color: dark ? Colors.white : const Color(0xFF0F172A),
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgressPill extends StatelessWidget {
+  const _ProgressPill({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Flexible(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .09),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 15),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -6494,726 +10714,1502 @@ class _ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = themeMode == ThemeMode.dark;
-    final iconColor = dark ? Colors.white : const Color(0xFF0F172A);
-    final completionPercent = profile.profileCompletionPercent;
-    final width = MediaQuery.of(context).size.width;
-    final isDesktop = width > 900;
+    final isDark = themeMode == ThemeMode.dark;
+    final profileText = isDark ? Colors.white : const Color(0xFF0F172A);
+    final profileMuted = isDark
+        ? const Color(0xFF9CA3AF)
+        : const Color(0xFF64748B);
+    final profileGradient = isDark
+        ? const [Color(0xFF020A17), Color(0xFF071426), Color(0xFF0B1322)]
+        : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFF1F5F9)];
+    final profileBorder = isDark
+        ? Colors.white.withValues(alpha: .06)
+        : const Color(0xFFE2E8F0);
+    final profileShadow = isDark
+        ? const Color(0xFF020617).withValues(alpha: .22)
+        : AppColors.studentPrimary.withValues(alpha: .07);
+    final profileHandle = _profileHandle(profile);
+    final activeCourses = data.modules
+        .where((module) => module.isUnlocked)
+        .length;
+    final totalXp =
+        data.completedModules * 500 +
+        data.averageScore * 25 +
+        data.certificateCount * 1000;
+    final level = math.max(1, data.completedModules + data.averageScore ~/ 20);
 
-    // Header Widget
-    final headerWidget = Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
+    void showComingSoon(String message) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+    }
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 820),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(6, 14, 6, 126),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: profileGradient,
+            ),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: profileBorder),
+            boxShadow: [
+              BoxShadow(
+                color: profileShadow,
+                blurRadius: 30,
+                offset: const Offset(0, 16),
+              ),
+            ],
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                _t(context, 'profile'),
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.5,
+              Row(
+                children: [
+                  _ProfileCircleButton(
+                    icon: Icons.arrow_back_rounded,
+                    tooltip: 'Ortga',
+                    onTap: () => showComingSoon(
+                      'Sahifalar orasida pastki navigatsiya orqali yuring.',
+                    ),
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        'Talaba profili',
+                        style: TextStyle(
+                          color: profileText,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -.2,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Badge.count(
+                    isLabelVisible: notificationCount > 0,
+                    count: notificationCount,
+                    child: _ProfileCircleButton(
+                      icon: Icons.notifications_none_rounded,
+                      tooltip: _t(context, 'notifications'),
+                      onTap: onNotifications,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _ProfileHeroCard(
+                profile: profile,
+                handle: profileHandle,
+                activeCourses: activeCourses,
+                totalXp: totalXp,
+                level: level,
+                onEditProfile: onEditProfile,
+              ),
+              const SizedBox(height: 18),
+              const _ProfileSectionTitle('Hisob va sozlamalar'),
+              const SizedBox(height: 10),
+              _ProfileSettingsGridCard(
+                items: [
+                  _ProfileSettingsAction(
+                    icon: Icons.person_outline_rounded,
+                    title: 'Shaxsiy ma’lumotlar',
+                    subtitle: 'Profil va shaxsiy ma’lumotlarni boshqarish',
+                    onTap: () => unawaited(onEditProfile()),
+                  ),
+                  _ProfileSettingsAction(
+                    icon: Icons.language_rounded,
+                    title: 'Til',
+                    subtitle: 'Ilova tili va mintaqa',
+                    trailing: _ProfileInlineValue(value: language.label),
+                    onTap: () async {
+                      final picked = await _showSelectionSheet<AppLanguage>(
+                        context,
+                        title: _t(context, 'language'),
+                        items: AppLanguage.values,
+                        initialValue: language,
+                        labelBuilder: (item) => item.label,
+                        subtitleBuilder: (item) =>
+                            languageOptionDescription(language, item),
+                      );
+                      if (picked != null) onLanguageChanged(picked);
+                    },
+                  ),
+                  _ProfileSettingsAction(
+                    icon: Icons.lock_outline_rounded,
+                    title: 'Xavfsizlik',
+                    subtitle: 'Parol va xavfsizlik sozlamalari',
+                    onTap: () =>
+                        showComingSoon('Xavfsizlik bo‘limi tez orada.'),
+                  ),
+                  _ProfileSettingsAction(
+                    icon: isDark
+                        ? Icons.dark_mode_rounded
+                        : Icons.light_mode_rounded,
+                    title: 'Qorong‘i rejim',
+                    subtitle: 'Ilova ko‘rinishini almashtirish',
+                    trailing: Switch.adaptive(
+                      value: isDark,
+                      onChanged: (value) => onThemeChanged(
+                        value ? ThemeMode.dark : ThemeMode.light,
+                      ),
+                      activeThumbColor: AppColors.studentPrimary,
+                      activeTrackColor: AppColors.studentPrimary.withValues(
+                        alpha: .35,
+                      ),
+                    ),
+                  ),
+                  _ProfileSettingsAction(
+                    icon: Icons.credit_card_rounded,
+                    title: 'To‘lovlar va obuna',
+                    subtitle: 'Obuna holati va to‘lov tarixi',
+                    onTap: () => showComingSoon('To‘lovlar bo‘limi tez orada.'),
+                  ),
+                  _ProfileSettingsAction(
+                    icon: Icons.support_agent_rounded,
+                    title: 'Yordam va qo‘llab-quvvatlash',
+                    subtitle: 'Yordam markazi va aloqa',
+                    onTap: () => unawaited(onContactAdmin()),
+                  ),
+                  _ProfileSettingsAction(
+                    icon: Icons.notifications_none_rounded,
+                    title: 'Bildirishnomalar',
+                    subtitle: 'Bildirishnoma sozlamalari',
+                    trailing: Switch.adaptive(
+                      value: notificationsEnabled,
+                      onChanged: onNotificationsChanged,
+                      activeThumbColor: AppColors.studentPrimary,
+                      activeTrackColor: AppColors.studentPrimary.withValues(
+                        alpha: .35,
+                      ),
+                    ),
+                  ),
+                  _ProfileSettingsAction(
+                    icon: Icons.info_outline_rounded,
+                    title: 'Ilova haqida',
+                    subtitle: 'Versiya $appVersionName',
+                    onTap: () => unawaited(onCheckForUpdate()),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: onSignOut,
+                  style: TextButton.styleFrom(
+                    backgroundColor: isDark
+                        ? const Color(0xFF0D1B2D)
+                        : const Color(0xFFFFF1F2),
+                    foregroundColor: const Color(0xFFFF5F57),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(
+                        color: isDark
+                            ? Colors.white.withValues(alpha: .05)
+                            : AppColors.errorRed.withValues(alpha: .12),
+                      ),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  child: Text(_t(context, 'logout')),
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                _t(context, 'profile_subtitle'),
-                style: TextStyle(
-                  fontSize: 13,
-                  color: dark
-                      ? const Color(0xFF94A3B8)
-                      : const Color(0xFF64748B),
+              const SizedBox(height: 14),
+              Center(
+                child: Text(
+                  '${_t(context, 'version_label')} v$appVersionName',
+                  style: TextStyle(
+                    color: profileMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(width: 8),
-        Badge.count(
-          isLabelVisible: notificationCount > 0,
-          count: notificationCount,
-          child: IconButton(
-            onPressed: onNotifications,
-            tooltip: _t(context, 'notifications'),
-            icon: Icon(
-              Icons.notifications_none_rounded,
-              color: iconColor,
-              size: 26,
-            ),
-          ),
-        ),
-        IconButton(
-          onPressed: () => unawaited(onEditProfile()),
-          tooltip: _t(context, 'edit_profile'),
-          icon: Icon(Icons.settings_outlined, color: iconColor, size: 26),
-        ),
-      ],
+      ),
     );
+  }
+}
 
-    // User Card
-    final userCardWidget = Container(
-      padding: const EdgeInsets.all(20),
+String _profileHandle(StudentProfile profile) {
+  final cleaned = profile.fullName
+      .toLowerCase()
+      .replaceAll(RegExp(r"[^a-z0-9\s_]+"), '')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), '_');
+  if (cleaned.isEmpty) return '@student_lab';
+  return '@${cleaned}_lab';
+}
+
+class _ProfileHeroCard extends StatelessWidget {
+  const _ProfileHeroCard({
+    required this.profile,
+    required this.handle,
+    required this.activeCourses,
+    required this.totalXp,
+    required this.level,
+    required this.onEditProfile,
+  });
+
+  final StudentProfile profile;
+  final String handle;
+  final int activeCourses;
+  final int totalXp;
+  final int level;
+  final Future<void> Function() onEditProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: AppColors.studentPrimary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF2434A8),
+            Color(0xFF4822B8),
+            Color(0xFF7C22D8),
+            Color(0xFF150A59),
+          ],
+          stops: [0, .34, .68, 1],
         ),
+        border: Border.all(color: Colors.white.withValues(alpha: .24)),
         boxShadow: [
           BoxShadow(
-            color: AppColors.studentPrimary.withValues(alpha: 0.06),
+            color: const Color(0xFF4C1D95).withValues(alpha: .28),
             blurRadius: 24,
-            offset: const Offset(0, 8),
+            offset: const Offset(0, 14),
           ),
         ],
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Stack(
-            children: [
-              _ProfileAvatar(profile: profile, size: 80),
-              Positioned(
-                bottom: 0,
-                right: 0,
-                child: Container(
-                  width: 26,
-                  height: 26,
-                  decoration: BoxDecoration(
-                    color: AppColors.studentPrimary,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Theme.of(context).cardColor,
-                      width: 2,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 560;
+          final avatarSize = compact ? 104.0 : 132.0;
+          final medalWidth = compact ? 96.0 : 156.0;
+          final medalHeight = compact ? 88.0 : 126.0;
+          final cardHeight = compact ? 184.0 : 188.0;
+          final leftInfo = compact ? avatarSize + 22 : avatarSize + 30;
+          final rightInfo = compact ? 0.0 : medalWidth + 20;
+
+          return SizedBox(
+            height: cardHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  right: -20,
+                  top: -34,
+                  child: Container(
+                    width: 150,
+                    height: 150,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: .08),
                     ),
                   ),
-                  child: const Icon(
-                    Icons.camera_alt_rounded,
-                    size: 13,
-                    color: Colors.white,
+                ),
+                Positioned(
+                  left: compact ? 8 : 8,
+                  top: compact ? 12 : 8,
+                  child: _ProfileHeroAvatar(
+                    profile: profile,
+                    onEditProfile: onEditProfile,
+                    size: avatarSize,
                   ),
+                ),
+                Positioned(
+                  right: compact ? 2 : 2,
+                  top: compact ? 10 : 0,
+                  child: SizedBox(
+                    width: medalWidth,
+                    height: medalHeight,
+                    child: const FittedBox(child: _ProfileAchievementMedal()),
+                  ),
+                ),
+                Positioned(
+                  left: leftInfo,
+                  right: rightInfo,
+                  top: compact ? 14 : 22,
+                  child: _ProfileHeroInfo(
+                    profile: profile,
+                    handle: handle,
+                    activeCourses: activeCourses,
+                    totalXp: totalXp,
+                    level: level,
+                    compact: compact,
+                    showMetrics: false,
+                  ),
+                ),
+                Positioned(
+                  left: compact ? 4 : leftInfo,
+                  right: compact ? 4 : medalWidth + 16,
+                  bottom: compact ? 8 : 10,
+                  child: _ProfileHeroMetricStrip(
+                    activeCourses: activeCourses,
+                    totalXp: totalXp,
+                    level: level,
+                    compact: compact,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ProfileHeroAvatar extends StatelessWidget {
+  const _ProfileHeroAvatar({
+    required this.profile,
+    required this.onEditProfile,
+    this.size = 116,
+  });
+
+  final StudentProfile profile;
+  final Future<void> Function() onEditProfile;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final editSize = (size * .32).clamp(28.0, 38.0);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: size,
+          height: size,
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              colors: [Color(0xFFE9D5FF), Color(0xFF7C3AED)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .22),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: ClipOval(
+            child: profile.hasAvatar
+                ? Image.network(
+                    profile.avatarUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const _ProfileHeroIllustration(),
+                  )
+                : const _ProfileHeroIllustration(),
+          ),
+        ),
+        Positioned(
+          right: -5,
+          bottom: size * .10,
+          child: InkWell(
+            onTap: () => unawaited(onEditProfile()),
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              width: editSize,
+              height: editSize,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .22),
+                    blurRadius: 12,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.edit_rounded,
+                color: AppColors.studentPrimary,
+                size: 17,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileHeroIllustration extends StatelessWidget {
+  const _ProfileHeroIllustration();
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(painter: _ProfileHeroIllustrationPainter());
+  }
+}
+
+class _ProfileHeroIllustrationPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = math.min(size.width, size.height) / 2;
+
+    final bgPaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFD8B4FE), Color(0xFF6D28D9)],
+      ).createShader(Offset.zero & size);
+    canvas.drawCircle(center, radius, bgPaint);
+
+    final shadow = Paint()
+      ..color = Colors.black.withValues(alpha: .18)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7);
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(center.dx, size.height * .83),
+        width: size.width * .58,
+        height: size.height * .12,
+      ),
+      shadow,
+    );
+
+    final hoodie = Paint()..color = const Color(0xFF5B21B6);
+    final hoodiePath = Path()
+      ..moveTo(size.width * .20, size.height)
+      ..quadraticBezierTo(
+        size.width * .24,
+        size.height * .68,
+        size.width * .50,
+        size.height * .66,
+      )
+      ..quadraticBezierTo(
+        size.width * .76,
+        size.height * .68,
+        size.width * .82,
+        size.height,
+      )
+      ..close();
+    canvas.drawPath(hoodiePath, hoodie);
+
+    final neck = Paint()..color = const Color(0xFFE8A17B);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(center.dx, size.height * .64),
+          width: size.width * .19,
+          height: size.height * .17,
+        ),
+        Radius.circular(size.width * .08),
+      ),
+      neck,
+    );
+
+    final face = Paint()..color = const Color(0xFFF3B28D);
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(center.dx, size.height * .43),
+        width: size.width * .46,
+        height: size.height * .50,
+      ),
+      face,
+    );
+
+    final earPaint = Paint()..color = const Color(0xFFE9A27F);
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(size.width * .26, size.height * .44),
+        width: size.width * .09,
+        height: size.height * .14,
+      ),
+      earPaint,
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(size.width * .74, size.height * .44),
+        width: size.width * .09,
+        height: size.height * .14,
+      ),
+      earPaint,
+    );
+
+    final hair = Paint()..color = const Color(0xFF21112F);
+    final hairPath = Path()
+      ..moveTo(size.width * .23, size.height * .33)
+      ..cubicTo(
+        size.width * .25,
+        size.height * .12,
+        size.width * .44,
+        size.height * .10,
+        size.width * .55,
+        size.height * .15,
+      )
+      ..cubicTo(
+        size.width * .67,
+        size.height * .10,
+        size.width * .82,
+        size.height * .23,
+        size.width * .72,
+        size.height * .40,
+      )
+      ..cubicTo(
+        size.width * .58,
+        size.height * .31,
+        size.width * .44,
+        size.height * .35,
+        size.width * .31,
+        size.height * .40,
+      )
+      ..close();
+    canvas.drawPath(hairPath, hair);
+
+    final curlPaint = Paint()
+      ..color = const Color(0xFF2D1745)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = size.width * .045
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      Rect.fromLTWH(
+        size.width * .30,
+        size.height * .12,
+        size.width * .28,
+        size.height * .22,
+      ),
+      math.pi * .08,
+      math.pi * 1.25,
+      false,
+      curlPaint,
+    );
+
+    final eye = Paint()..color = const Color(0xFF111827);
+    canvas.drawCircle(Offset(size.width * .41, size.height * .45), 2.8, eye);
+    canvas.drawCircle(Offset(size.width * .59, size.height * .45), 2.8, eye);
+
+    final brow = Paint()
+      ..color = const Color(0xFF21112F)
+      ..strokeWidth = 2.2
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(size.width * .35, size.height * .39),
+      Offset(size.width * .45, size.height * .38),
+      brow,
+    );
+    canvas.drawLine(
+      Offset(size.width * .55, size.height * .38),
+      Offset(size.width * .65, size.height * .39),
+      brow,
+    );
+
+    final nose = Paint()
+      ..color = const Color(0xFFD98468)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.7
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(size.width * .50, size.height * .47),
+      Offset(size.width * .48, size.height * .54),
+      nose,
+    );
+
+    final smile = Paint()
+      ..color = const Color(0xFF9F2F45)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.1
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(
+      Rect.fromCenter(
+        center: Offset(size.width * .50, size.height * .55),
+        width: size.width * .18,
+        height: size.height * .11,
+      ),
+      math.pi * .12,
+      math.pi * .78,
+      false,
+      smile,
+    );
+
+    final drawString = Paint()
+      ..color = const Color(0xFFDDD6FE)
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(size.width * .43, size.height * .72),
+      Offset(size.width * .38, size.height * .93),
+      drawString,
+    );
+    canvas.drawLine(
+      Offset(size.width * .57, size.height * .72),
+      Offset(size.width * .62, size.height * .93),
+      drawString,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _ProfileHeroInitials extends StatelessWidget {
+  const _ProfileHeroInitials({required this.profile});
+
+  final StudentProfile profile;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFF5D0FE), Color(0xFF8B5CF6)],
+        ),
+      ),
+      child: Center(
+        child: Text(
+          profile.initials,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 34,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileHeroInfo extends StatelessWidget {
+  const _ProfileHeroInfo({
+    required this.profile,
+    required this.handle,
+    required this.activeCourses,
+    required this.totalXp,
+    required this.level,
+    required this.compact,
+    required this.showMetrics,
+  });
+
+  final StudentProfile profile;
+  final String handle;
+  final int activeCourses;
+  final int totalXp;
+  final int level;
+  final bool compact;
+  final bool showMetrics;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                profile.fullName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: compact ? 20 : 25,
+                  height: 1.08,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.verified_rounded,
+              color: Color(0xFFB7A7FF),
+              size: 22,
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          handle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: .78),
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .16),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white.withValues(alpha: .18)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.workspace_premium_rounded,
+                color: Color(0xFFFFD166),
+                size: 16,
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Premium a’zo',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
             ],
           ),
-          const SizedBox(width: 16),
+        ),
+        if (showMetrics) ...[
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 18,
+            runSpacing: 12,
+            children: [
+              _ProfileHeroMetric(
+                icon: Icons.calendar_month_rounded,
+                label: 'A’zo bo‘lgan sana',
+                value: 'Faol profil',
+              ),
+              _ProfileHeroMetric(
+                icon: Icons.menu_book_rounded,
+                label: 'O‘qiyotgan kurslar',
+                value: '$activeCourses ta',
+              ),
+              _ProfileHeroMetric(
+                icon: Icons.emoji_events_rounded,
+                label: 'Jami XP',
+                value: '${_compactNumber(totalXp)} XP',
+              ),
+              _ProfileHeroMetric(
+                icon: Icons.leaderboard_rounded,
+                label: 'Daraja',
+                value: 'Level $level',
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  static String _compactNumber(int value) {
+    if (value < 1000) return value.toString();
+    final compactValue = value / 1000;
+    final text = compactValue.toStringAsFixed(compactValue >= 10 ? 0 : 1);
+    return '${text.replaceAll('.0', '')}k';
+  }
+}
+
+class _ProfileHeroMetricStrip extends StatelessWidget {
+  const _ProfileHeroMetricStrip({
+    required this.activeCourses,
+    required this.totalXp,
+    required this.level,
+    required this.compact,
+  });
+
+  final int activeCourses;
+  final int totalXp;
+  final int level;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(
+          child: _ProfileHeroMiniMetric(
+            icon: Icons.calendar_month_rounded,
+            label: 'Sana',
+            value: 'Faol',
+          ),
+        ),
+        _ProfileHeroMetricSeparator(compact: compact),
+        Expanded(
+          child: _ProfileHeroMiniMetric(
+            icon: Icons.menu_book_rounded,
+            label: 'Kurslar',
+            value: '$activeCourses ta',
+          ),
+        ),
+        _ProfileHeroMetricSeparator(compact: compact),
+        Expanded(
+          child: _ProfileHeroMiniMetric(
+            icon: Icons.emoji_events_rounded,
+            label: 'Jami XP',
+            value: '${_ProfileHeroInfo._compactNumber(totalXp)} XP',
+          ),
+        ),
+        _ProfileHeroMetricSeparator(compact: compact),
+        Expanded(
+          child: _ProfileHeroMiniMetric(
+            icon: Icons.leaderboard_rounded,
+            label: 'Daraja',
+            value: 'Level $level',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileHeroMetricSeparator extends StatelessWidget {
+  const _ProfileHeroMetricSeparator({required this.compact});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: compact ? 6 : 14,
+      height: 28,
+      child: VerticalDivider(
+        width: 1,
+        color: Colors.white.withValues(alpha: .13),
+      ),
+    );
+  }
+}
+
+class _ProfileHeroMiniMetric extends StatelessWidget {
+  const _ProfileHeroMiniMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .13),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Icon(icon, color: const Color(0xFFC4B5FD), size: 15),
+        ),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: .58),
+                  fontSize: 8.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileHeroMetricGrid extends StatelessWidget {
+  const _ProfileHeroMetricGrid({
+    required this.activeCourses,
+    required this.totalXp,
+    required this.level,
+  });
+
+  final int activeCourses;
+  final int totalXp;
+  final int level;
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = [
+      const _ProfileHeroMetric(
+        icon: Icons.calendar_month_rounded,
+        label: 'A’zo bo‘lgan sana',
+        value: 'Faol profil',
+      ),
+      _ProfileHeroMetric(
+        icon: Icons.menu_book_rounded,
+        label: 'O‘qiyotgan kurslar',
+        value: '$activeCourses ta',
+      ),
+      _ProfileHeroMetric(
+        icon: Icons.emoji_events_rounded,
+        label: 'Jami XP',
+        value: '${_ProfileHeroInfo._compactNumber(totalXp)} XP',
+      ),
+      _ProfileHeroMetric(
+        icon: Icons.leaderboard_rounded,
+        label: 'Daraja',
+        value: 'Level $level',
+      ),
+    ];
+
+    return Wrap(spacing: 14, runSpacing: 12, children: metrics);
+  }
+}
+
+class _ProfileHeroMetric extends StatelessWidget {
+  const _ProfileHeroMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .14),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: const Color(0xFFC4B5FD), size: 16),
+        ),
+        const SizedBox(width: 7),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: .58),
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileAchievementMedal extends StatelessWidget {
+  const _ProfileAchievementMedal();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Positioned(
+          bottom: 0,
+          child: Container(
+            width: 112,
+            height: 22,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: .18),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+        ),
+        Container(
+          width: 104,
+          height: 104,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(26),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF9F7AEA), Color(0xFF4C1D95)],
+            ),
+            border: Border.all(color: Colors.white.withValues(alpha: .22)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .25),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.school_rounded,
+            color: Color(0xFFC4B5FD),
+            size: 54,
+          ),
+        ),
+        Positioned(
+          left: 0,
+          bottom: 12,
+          child: Icon(
+            Icons.eco_rounded,
+            color: const Color(0xFFFFD166).withValues(alpha: .92),
+            size: 42,
+          ),
+        ),
+        Positioned(
+          right: 0,
+          bottom: 12,
+          child: Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.rotationY(math.pi),
+            child: Icon(
+              Icons.eco_rounded,
+              color: const Color(0xFFFFD166).withValues(alpha: .92),
+              size: 42,
+            ),
+          ),
+        ),
+        const Positioned(
+          right: 12,
+          top: 8,
+          child: Icon(
+            Icons.auto_awesome_rounded,
+            color: Color(0xFFFFD166),
+            size: 18,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileSettingsGridCard extends StatelessWidget {
+  const _ProfileSettingsGridCard({required this.items});
+
+  final List<_ProfileSettingsAction> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileSettingsCard(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final twoColumns = constraints.maxWidth >= 640;
+          if (!twoColumns) {
+            return Column(
+              children: [
+                for (var index = 0; index < items.length; index++) ...[
+                  items[index],
+                  if (index != items.length - 1)
+                    const _ProfileSettingsDivider(),
+                ],
+              ],
+            );
+          }
+
+          final left = [for (var i = 0; i < items.length; i += 2) items[i]];
+          final right = [for (var i = 1; i < items.length; i += 2) items[i]];
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _ProfileSettingsColumn(items: left)),
+                VerticalDivider(
+                  width: 1,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white.withValues(alpha: .07)
+                      : const Color(0xFFE2E8F0),
+                ),
+                Expanded(child: _ProfileSettingsColumn(items: right)),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ProfileSettingsColumn extends StatelessWidget {
+  const _ProfileSettingsColumn({required this.items});
+
+  final List<_ProfileSettingsAction> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        for (var index = 0; index < items.length; index++) ...[
+          items[index],
+          if (index != items.length - 1) const _ProfileSettingsDivider(),
+        ],
+      ],
+    );
+  }
+}
+
+class _ProfileSettingsAction extends StatelessWidget {
+  const _ProfileSettingsAction({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: isDark
+                  ? Colors.white.withValues(alpha: .08)
+                  : Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.studentPrimary.withValues(alpha: .10),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Icon(icon, color: AppColors.studentPrimary, size: 21),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  profile.fullName,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isDark ? Colors.white : const Color(0xFF0F172A),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
-                  profile.phone.isEmpty
-                      ? _t(context, 'phone_not_set')
-                      : profile.displayPhone,
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 13,
-                    color: dark
+                    color: isDark
                         ? const Color(0xFF94A3B8)
                         : const Color(0xFF64748B),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.studentPrimary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.school_rounded,
-                        size: 14,
-                        color: AppColors.studentPrimary,
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        'Student',
-                        style: TextStyle(
-                          color: AppColors.studentPrimary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
             ),
           ),
-          GestureDetector(
-            onTap: () => unawaited(onEditProfile()),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: AppColors.studentPrimary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                Icons.edit_rounded,
-                size: 17,
-                color: AppColors.studentPrimary,
-              ),
-            ),
-          ),
+          const SizedBox(width: 8),
+          trailing ?? const _ProfileChevron(),
         ],
       ),
     );
 
-    // Profile Completeness Card
-    final completenessCardWidget = GestureDetector(
-      onTap: () => unawaited(onEditProfile()),
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: AppColors.studentPrimary.withValues(alpha: 0.1),
-          ),
-        ),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 72,
-              height: 72,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  CircularProgressIndicator(
-                    value: completionPercent / 100,
-                    strokeWidth: 6,
-                    backgroundColor: AppColors.studentPrimary.withValues(
-                      alpha: 0.12,
-                    ),
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      AppColors.studentPrimary,
-                    ),
-                  ),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '$completionPercent%',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        'profil',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: dark
-                              ? const Color(0xFF94A3B8)
-                              : const Color(0xFF64748B),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Profil to\'liqligi',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Rasm, manzil va shaxsiy ma\'lumotlar to\'liq bo\'lsa admin va tizim sizni aniqroq taniydi.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.4,
-                      color: dark
-                          ? const Color(0xFF94A3B8)
-                          : const Color(0xFF64748B),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 15,
-              color: dark ? const Color(0xFF94A3B8) : const Color(0xFF94A3B8),
-            ),
-          ],
-        ),
+    if (onTap == null) return content;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: content,
+    );
+  }
+}
+
+class _ProfileSectionTitle extends StatelessWidget {
+  const _ProfileSectionTitle(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Text(
+      title,
+      style: TextStyle(
+        color: isDark ? Colors.white : const Color(0xFF0F172A),
+        fontSize: 16,
+        fontWeight: FontWeight.w800,
       ),
     );
+  }
+}
 
-    // Stat Cards
-    final statCardsWidget = Row(
-      children: [
-        Expanded(
-          child: _ProfileStatCard(
-            icon: Icons.menu_book_rounded,
-            value: data.activeModuleCount.toString(),
-            label: 'O\'rganayotgan\nmodullar',
-            color: AppColors.studentPrimary,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ProfileStatCard(
-            icon: Icons.check_circle_outline_rounded,
-            value: data.completedModules.toString(),
-            label: 'Tugatilgan\nmodullar',
-            color: AppColors.successGreen,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ProfileStatCard(
-            icon: Icons.bar_chart_rounded,
-            value: '${data.averageScore}%',
-            label: 'Umumiy\nnatija',
-            color: AppColors.amber,
-          ),
-        ),
-      ],
-    );
+class _ProfileSettingsCard extends StatelessWidget {
+  const _ProfileSettingsCard({required this.child});
 
-    // Settings Card
-    final settingsCardWidget = Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
       decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(24),
+        color: isDark
+            ? const Color(0xFF0A1627).withValues(alpha: .92)
+            : Colors.white,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: AppColors.studentPrimary.withValues(alpha: 0.1),
+          color: isDark
+              ? Colors.white.withValues(alpha: .06)
+              : const Color(0xFFE2E8F0),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark
+                ? Colors.black.withValues(alpha: .16)
+                : AppColors.studentPrimary.withValues(alpha: .05),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _ProfileCircleButton extends StatelessWidget {
+  const _ProfileCircleButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: onTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: isDark
+                ? Colors.white.withValues(alpha: .07)
+                : const Color(0xFFF1F5F9),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: .08)
+                  : const Color(0xFFE2E8F0),
+            ),
+          ),
+          child: Icon(
+            icon,
+            color: isDark ? Colors.white : const Color(0xFF0F172A),
+            size: 25,
+          ),
         ),
       ),
-      child: Column(
+    );
+  }
+}
+
+class _ProfileSettingsTile extends StatelessWidget {
+  const _ProfileSettingsTile({
+    required this.icon,
+    required this.title,
+    required this.trailing,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final Widget trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
         children: [
-          _SettingsRow(
-            icon: Icons.language_rounded,
-            label: _t(context, 'language'),
-            subtitle: language.label,
-            trailing: _CompactLanguageSelector(
-              language: language,
-              onChanged: onLanguageChanged,
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: Icon(
+              icon,
+              color: isDark ? const Color(0xFFB7C2D6) : const Color(0xFF64748B),
+              size: 23,
             ),
           ),
-          const Divider(height: 1, indent: 64),
-          _SettingsRow(
-            icon: Icons.notifications_none_rounded,
-            label: _t(context, 'notifications'),
-            subtitle: notificationsEnabled
-                ? _t(context, 'notifications_enabled_hint')
-                : _t(context, 'notifications_disabled_hint'),
-            trailing: Switch(
-              value: notificationsEnabled,
-              onChanged: onNotificationsChanged,
-              activeTrackColor: AppColors.studentPrimary.withValues(alpha: 0.5),
-              activeThumbColor: AppColors.studentPrimary,
-            ),
-          ),
-          const Divider(height: 1, indent: 64),
-          _SettingsRow(
-            icon: Icons.dark_mode_outlined,
-            label: _t(context, 'dark_mode'),
-            subtitle: dark
-                ? _t(context, 'dark_mode_enabled')
-                : _t(context, 'light_mode_enabled'),
-            trailing: Switch(
-              value: dark,
-              onChanged: (value) =>
-                  onThemeChanged(value ? ThemeMode.dark : ThemeMode.light),
-              activeTrackColor: AppColors.studentPrimary.withValues(alpha: 0.5),
-              activeThumbColor: AppColors.studentPrimary,
-            ),
-          ),
-          const Divider(height: 1, indent: 64),
-          _SettingsRow(
-            icon: Icons.support_agent_rounded,
-            label: _t(context, 'contact_admin'),
-            subtitle: _t(context, 'contact_admin_subtitle'),
-            trailing: IconButton(
-              tooltip: _t(context, 'send_message'),
-              onPressed: () => unawaited(onContactAdmin()),
-              icon: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-            ),
-          ),
-          const Divider(height: 1, indent: 64),
-          _SettingsRow(
-            icon: Icons.system_update_alt_rounded,
-            label: _t(context, 'check_updates'),
-            subtitle: _t(context, 'check_updates_subtitle'),
-            trailing: IconButton(
-              tooltip: _t(context, 'check_updates'),
-              onPressed: () => unawaited(onCheckForUpdate()),
-              icon: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-            ),
-          ),
-          const Divider(height: 1, indent: 64),
-          _SettingsRow(
-            icon: Icons.logout_rounded,
-            label: _t(context, 'logout'),
-            subtitle: _t(context, 'close_session'),
-            iconColor: AppColors.errorRed,
-            trailing: IconButton(
-              tooltip: _t(context, 'logout'),
-              onPressed: onSignOut,
-              icon: const Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 16,
-                color: AppColors.errorRed,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isDark ? Colors.white : const Color(0xFF0F172A),
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
+          const SizedBox(width: 10),
+          trailing,
         ],
       ),
     );
 
-    // Module Progress column contents (Column 2)
-    final moduleProgressList = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Modul progressi',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.3,
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (data.modules.isEmpty)
-          _EmptyStateCard(
-            icon: Icons.track_changes_outlined,
-            title: 'Progress hali yo‘q',
-            message:
-                'Modullar biriktirilib o‘qish boshlanganidan keyin, bu yerda real o‘sish va yutuqlar ko‘rinadi.',
-            actionLabel: 'Yangilash',
-            onAction: () => unawaited(Future.value()),
-          )
-        else
-          ...data.modules.map(
-            (module) => Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).cardColor,
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(
-                    color: module.isPassed
-                        ? AppColors.successGreen.withValues(alpha: 0.2)
-                        : AppColors.studentPrimary.withValues(alpha: 0.1),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: module.isPassed
-                                ? AppColors.successGreen.withValues(alpha: 0.1)
-                                : AppColors.studentPrimary.withValues(
-                                    alpha: 0.1,
-                                  ),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Icon(
-                            module.isPassed
-                                ? Icons.check_circle_rounded
-                                : Icons.timelapse_rounded,
-                            color: module.isPassed
-                                ? AppColors.successGreen
-                                : AppColors.studentPrimary,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Text(
-                            '${module.order}-modul: ${module.title}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '${(module.progress * 100).round()}%',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: module.isPassed
-                                ? AppColors.successGreen
-                                : AppColors.studentPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    ProgressLine(
-                      value: module.progress,
-                      color: module.isPassed
-                          ? AppColors.successGreen
-                          : AppColors.studentPrimary,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      module.isPassed
-                          ? 'Modul yakunlandi va keyingi blok ochilgan.'
-                          : '${module.topics.where((topic) => topic.status == TopicStatus.completed).length} ta mavzu tugallangan.',
-                      style: TextStyle(
-                        color: Theme.of(context).textTheme.bodySmall?.color,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
+    if (onTap == null) return content;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: content,
     );
+  }
+}
 
-    // Certificates column contents (Column 3)
-    final passedModules = data.modules.where((m) => m.isPassed).toList();
-    final certificatesList = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Sertifikatlar',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.3,
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (passedModules.isEmpty)
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: AppColors.studentPrimary.withValues(alpha: 0.1),
-              ),
-            ),
-            child: Column(
-              children: [
-                Icon(
-                  Icons.workspace_premium_outlined,
-                  color: AppColors.studentPrimary.withValues(alpha: 0.4),
-                  size: 48,
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Sertifikatlar mavjud emas',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Kurs modullarini to\'liq tugatib, yakuniy imtihondan o\'ting va rasmiy sertifikatga ega bo\'ling.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.4,
-                    color: dark
-                        ? const Color(0xFF94A3B8)
-                        : const Color(0xFF64748B),
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          )
-        else
-          ...passedModules.map((module) {
-            return Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: AppColors.amber.withValues(alpha: 0.2),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.amber.withValues(alpha: 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.amber.withValues(alpha: 0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.workspace_premium_rounded,
-                      color: AppColors.amber,
-                      size: 28,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${module.title} kursi sertifikati',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'ID: LP-${module.id.toUpperCase()}-${(profile.fullName.hashCode % 1000000).toString().padLeft(6, '0')}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: dark
-                                ? const Color(0xFF94A3B8)
-                                : const Color(0xFF64748B),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        GestureDetector(
-                          onTap: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Sertifikat yuklab olinmoqda...'),
-                              ),
-                            );
-                          },
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.download_rounded,
-                                size: 14,
-                                color: AppColors.studentPrimary,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Yuklab olish',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.studentPrimary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-      ],
+class _ProfileSettingsDivider extends StatelessWidget {
+  const _ProfileSettingsDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Divider(
+      height: 1,
+      indent: 58,
+      color: isDark
+          ? Colors.white.withValues(alpha: .06)
+          : const Color(0xFFE2E8F0),
     );
+  }
+}
 
-    if (isDesktop) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          headerWidget,
-          const SizedBox(height: 20),
-          statCardsWidget,
-          const SizedBox(height: 24),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Column 1: Profile Info
-              Expanded(
-                flex: 4,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    userCardWidget,
-                    const SizedBox(height: 14),
-                    completenessCardWidget,
-                    const SizedBox(height: 14),
-                    settingsCardWidget,
-                    const SizedBox(height: 14),
-                    Center(
-                      child: Text(
-                        '${_t(context, 'version_label')} v$appVersionName',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 24),
-              // Column 2: Module Progress List
-              Expanded(flex: 4, child: moduleProgressList),
-              const SizedBox(width: 24),
-              // Column 3: Certificates
-              Expanded(flex: 3, child: certificatesList),
-            ],
-          ),
-        ],
-      );
-    }
+class _ProfileInlineValue extends StatelessWidget {
+  const _ProfileInlineValue({required this.value});
 
-    // Fallback: Mobile Layout
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        headerWidget,
-        const SizedBox(height: 20),
-        userCardWidget,
-        const SizedBox(height: 14),
-        completenessCardWidget,
-        const SizedBox(height: 14),
-        statCardsWidget,
-        const SizedBox(height: 20),
-        settingsCardWidget,
-        const SizedBox(height: 14),
-        Center(
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 116),
           child: Text(
-            '${_t(context, 'version_label')} v$appVersionName',
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF64748B),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
+        const SizedBox(width: 4),
+        const _ProfileChevron(),
       ],
+    );
+  }
+}
+
+class _ProfileChevron extends StatelessWidget {
+  const _ProfileChevron();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Icon(
+      Icons.chevron_right_rounded,
+      color: isDark ? const Color(0xFFCBD5E1) : const Color(0xFF64748B),
+      size: 24,
+    );
+  }
+}
+
+class _ProfileLocalSwitch extends StatefulWidget {
+  const _ProfileLocalSwitch({required this.initialValue});
+
+  final bool initialValue;
+
+  @override
+  State<_ProfileLocalSwitch> createState() => _ProfileLocalSwitchState();
+}
+
+class _ProfileLocalSwitchState extends State<_ProfileLocalSwitch> {
+  late bool _value = widget.initialValue;
+
+  @override
+  Widget build(BuildContext context) {
+    return Switch.adaptive(
+      value: _value,
+      onChanged: (value) => setState(() => _value = value),
+      activeThumbColor: AppColors.studentPrimary,
+      activeTrackColor: AppColors.studentPrimary.withValues(alpha: .35),
     );
   }
 }
@@ -7261,181 +12257,6 @@ class _ProfileAvatar extends StatelessWidget {
           fontWeight: FontWeight.w900,
           fontSize: size * .32,
         ),
-      ),
-    );
-  }
-}
-
-class _ProfileCompletionCard extends StatelessWidget {
-  const _ProfileCompletionCard({required this.profile});
-
-  final StudentProfile profile;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: AppColors.studentPrimary.withValues(alpha: .15),
-        ),
-      ),
-      child: Row(
-        children: [
-          CircularScore(
-            value: profile.profileCompletionPercent / 100,
-            label: 'profil',
-            size: 74,
-            color: AppColors.studentPrimary,
-          ),
-          const SizedBox(width: 20),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Profil to‘liqligi',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Rasm, manzil va shaxsiy ma’lumotlar to‘liq bo‘lsa admin va tizim sizni aniqroq taniydi.',
-                  style: TextStyle(
-                    color: Theme.of(context).textTheme.bodySmall?.color,
-                    fontSize: 13,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ProfileStatCard extends StatelessWidget {
-  const _ProfileStatCard({
-    required this.icon,
-    required this.value,
-    required this.label,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String value;
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.15)),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color, size: 22),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              color: color,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-              height: 1.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SettingsRow extends StatelessWidget {
-  const _SettingsRow({
-    required this.icon,
-    required this.label,
-    required this.subtitle,
-    required this.trailing,
-    this.iconColor = AppColors.studentPrimary,
-  });
-
-  final IconData icon;
-  final String label;
-  final String subtitle;
-  final Widget trailing;
-  final Color iconColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: iconColor, size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: iconColor == AppColors.errorRed ? iconColor : null,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Theme.of(context).textTheme.bodySmall?.color,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          trailing,
-        ],
       ),
     );
   }
@@ -7601,16 +12422,11 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
   @override
   void initState() {
     super.initState();
-    try {
-      globalContext.setProperty(
-        'triggerSupportSubmit'.toJS,
-        ((JSString subject, JSString body) {
-          _subjectController.text = subject.toDart;
-          _messageController.text = body.toDart;
-          _submit();
-        }).toJS,
-      );
-    } catch (_) {}
+    registerTriggerSupportSubmit((subject, body) {
+      _subjectController.text = subject;
+      _messageController.text = body;
+      _submit();
+    });
   }
 
   final _audioRecorder = AudioRecorder();
@@ -8207,105 +13023,6 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
   }
 }
 
-class _ProfileStat extends StatelessWidget {
-  const _ProfileStat({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Icon(icon, color: AppColors.primaryBlue, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          ),
-          Text(value, style: Theme.of(context).textTheme.titleMedium),
-        ],
-      ),
-    );
-  }
-}
-
-class _CompactLanguageSelector extends StatelessWidget {
-  const _CompactLanguageSelector({
-    required this.language,
-    required this.onChanged,
-  });
-
-  final AppLanguage language;
-  final ValueChanged<AppLanguage> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () async {
-        final picked = await _showSelectionSheet<AppLanguage>(
-          context,
-          title: _t(context, 'language'),
-          items: AppLanguage.values,
-          initialValue: language,
-          labelBuilder: (item) => item.label,
-          subtitleBuilder: (item) => languageOptionDescription(language, item),
-          leadingBuilder: (item, selected) => Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: selected
-                  ? AppColors.primaryBlue.withValues(alpha: .12)
-                  : AppColors.background,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Center(
-              child: Text(
-                item.shortLabel,
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: selected ? AppColors.primaryBlue : AppColors.navy,
-                ),
-              ),
-            ),
-          ),
-        );
-        if (picked != null) onChanged(picked);
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.primaryBlue.withValues(alpha: .08),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: AppColors.primaryBlue.withValues(alpha: .12),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.language_rounded, size: 18),
-            const SizedBox(width: 8),
-            Text(
-              language.shortLabel,
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(width: 4),
-            const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ProfileEditSheet extends StatefulWidget {
   const _ProfileEditSheet({required this.profile, required this.language});
 
@@ -8446,12 +13163,25 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
 
   String _text(String key) => studentText(_language, key);
 
+  String _phoneDigitsFromProfile() {
+    final rawPhone = widget.profile.phone.trim();
+    if (rawPhone.isEmpty) return '';
+    final digits = rawPhone.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('998') && digits.length >= 12) {
+      return digits.substring(3, 12);
+    }
+    if (digits.length >= 9) {
+      return digits.substring(digits.length - 9);
+    }
+    return digits;
+  }
+
   @override
   void initState() {
     super.initState();
     _firstNameController.text = widget.profile.firstName;
     _lastNameController.text = widget.profile.lastName;
-    _phoneController.text = widget.profile.phone.replaceFirst('+998', '');
+    _phoneController.text = _phoneDigitsFromProfile();
     _ageController.text = widget.profile.age?.toString() ?? '';
     _mahallaController.text = widget.profile.mahalla;
     _streetController.text = widget.profile.street;
@@ -8495,20 +13225,16 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
     final phoneDigits = _phoneController.text.trim();
     final age = int.tryParse(_ageController.text.trim());
 
-    if (firstName.length < 2 || lastName.length < 2) {
+    if (firstName.isNotEmpty && firstName.length < 2) {
       _showError(_text('name_complete_error'));
       return;
     }
-    if (!RegExp(r'^\d{9}$').hasMatch(phoneDigits)) {
+    if (lastName.isNotEmpty && lastName.length < 2) {
+      _showError(_text('name_complete_error'));
+      return;
+    }
+    if (phoneDigits.isNotEmpty && !RegExp(r'^\d{9}$').hasMatch(phoneDigits)) {
       _showError(_text('phone_invalid'));
-      return;
-    }
-    if (_gender.isEmpty) {
-      _showError(_text('choose_gender_error'));
-      return;
-    }
-    if (_region.isEmpty || _district.isEmpty) {
-      _showError(_text('choose_region_district_error'));
       return;
     }
     if (age != null && (age < 10 || age > 120)) {
@@ -8529,11 +13255,17 @@ class _ProfileEditSheetState extends State<_ProfileEditSheet> {
         );
       }
 
-      await _repository.updateStudentProfile(
+      final fallbackFirstName = widget.profile.firstName.trim();
+      final fallbackLastName = widget.profile.lastName.trim();
+      final savedPhone = phoneDigits.isEmpty
+          ? widget.profile.phone.trim()
+          : '+998$phoneDigits';
+
+      await _repository.updateOwnProfile(
         StudentProfileUpdate(
-          firstName: firstName,
-          lastName: lastName,
-          phone: '+998$phoneDigits',
+          firstName: firstName.isEmpty ? fallbackFirstName : firstName,
+          lastName: lastName.isEmpty ? fallbackLastName : lastName,
+          phone: savedPhone,
           gender: _gender,
           age: age,
           region: _region,

@@ -1,0 +1,107 @@
+name: Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Prepare download artifact
+        run: |
+          mkdir -p build/web/downloads
+          cp build/app/outputs/flutter-apk/app-release.apk build/web/downloads/labproof-academy-student.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: labproof-academy-student-apk
+          path: build/web/downloads/labproof-academy-student.apk
+
+      - name: Publish latest APK release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: student-latest
+          name: LabProof Academy Student Latest
+          body: Latest student APK built from ${{ github.sha }}.
+          files: build/web/downloads/labproof-academy-student.apk
+          make_latest: true
+          overwrite_files: true
+
+      - name: Register update in Supabase
+        if: ${{ secrets.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APP_RELEASE_CHANNEL: ${{ vars.APP_RELEASE_CHANNEL || 'student' }}
+          DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/student-latest/labproof-academy-student.apk
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import urllib.request
+
+          version_line = ""
+          with open("pubspec.yaml", "r", encoding="utf-8") as pubspec:
+              for line in pubspec:
+                  if line.startswith("version:"):
+                      version_line = line.split(":", 1)[1].strip()
+                      break
+
+          version_name, _, version_code = version_line.partition("+")
+          payload = {
+              "platform": "android",
+              "channel": os.environ["APP_RELEASE_CHANNEL"],
+              "version_name": version_name,
+              "version_code": int(version_code or "1"),
+              "download_url": os.environ["DOWNLOAD_URL"],
+              "is_required": False,
+              "is_active": True,
+              "release_notes": "GitHub push orqali avtomatik yig'ilgan APK.",
+          }
+
+          request = urllib.request.Request(
+              os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/app_releases",
+              data=json.dumps(payload).encode("utf-8"),
+              method="POST",
+              headers={
+                  "apikey": os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+                  "Authorization": "Bearer " + os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+                  "Content-Type": "application/json",
+                  "Prefer": "return=minimal",
+              },
+          )
+          with urllib.request.urlopen(request) as response:
+              if response.status not in (200, 201, 204):
+                  raise SystemExit(f"Unexpected Supabase status: {response.status}")
+          PY
