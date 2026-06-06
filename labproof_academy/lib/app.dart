@@ -2,11 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'core/constants/app_language.dart';
 import 'core/constants/app_colors.dart';
 import 'core/services/app_preferences_service.dart';
+import 'core/services/app_update_installer_service.dart';
 import 'core/services/app_update_service.dart';
 import 'core/services/auth_service.dart';
 import 'core/theme/app_theme.dart';
@@ -42,6 +42,7 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
     defaultValue: 'student',
   );
   static const _updateService = AppUpdateService();
+  static const _updateInstaller = AppUpdateInstallerService();
 
   bool _showSplash = true;
   bool _checkingSession = true;
@@ -229,8 +230,10 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
       return false;
     }
 
+    final installedVersionCode =
+        await _updateInstaller.installedVersionCode() ?? _currentVersionCode;
     final lookup = await _updateService.findAvailableUpdate(
-      currentVersionCode: _currentVersionCode,
+      currentVersionCode: installedVersionCode,
       channel: _releaseChannel,
     );
     final release = lookup.release;
@@ -280,38 +283,90 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
     return showDialog<void>(
       context: dialogContext,
       barrierDismissible: !release.isRequired,
-      builder: (context) => AlertDialog(
-        icon: const Icon(
-          Icons.system_update_alt_rounded,
-          color: AppColors.primaryBlue,
-        ),
-        title: const Text('Yangi versiya mavjud'),
-        content: Text(
-          [
-            'LabProof Academy ${release.versionName} tayyor.',
-            if ((release.releaseNotes ?? '').trim().isNotEmpty)
-              release.releaseNotes!.trim(),
-            'Yangilash uchun APK yuklab olinadi.',
-          ].join('\n\n'),
-        ),
-        actions: [
-          if (!release.isRequired)
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Keyinroq'),
+      builder: (context) {
+        var installing = false;
+        var progress = 0.0;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            icon: const Icon(
+              Icons.system_update_alt_rounded,
+              color: AppColors.primaryBlue,
             ),
-          FilledButton.icon(
-            onPressed: () async {
-              await launchUrl(
-                release.downloadUrl,
-                mode: LaunchMode.externalApplication,
-              );
-            },
-            icon: const Icon(Icons.download_rounded),
-            label: const Text('Yangilash'),
+            title: const Text('Yangi versiya mavjud'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  [
+                    'LabProof Academy ${release.versionName} tayyor.',
+                    if ((release.releaseNotes ?? '').trim().isNotEmpty)
+                      release.releaseNotes!.trim(),
+                    'APK ilova ichida yuklanadi va o‘rnatish oynasi ochiladi.',
+                  ].join('\n\n'),
+                ),
+                if (installing) ...[
+                  const SizedBox(height: 18),
+                  LinearProgressIndicator(value: progress),
+                  const SizedBox(height: 8),
+                  Text(
+                    progress >= 1
+                        ? 'O‘rnatish oynasi ochilmoqda...'
+                        : 'Yuklanmoqda ${(progress * 100).round()}%',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              if (!release.isRequired)
+                TextButton(
+                  onPressed: installing
+                      ? null
+                      : () => Navigator.of(context).pop(),
+                  child: const Text('Keyinroq'),
+                ),
+              FilledButton.icon(
+                onPressed: installing
+                    ? null
+                    : () async {
+                        setDialogState(() {
+                          installing = true;
+                          progress = 0;
+                        });
+                        try {
+                          await _updateInstaller.downloadAndInstall(
+                            release,
+                            onProgress: (value) {
+                              if (!context.mounted) return;
+                              setDialogState(() => progress = value);
+                            },
+                          );
+                          if (context.mounted && !release.isRequired) {
+                            Navigator.of(context).pop();
+                          }
+                        } on Object catch (error) {
+                          if (!context.mounted) return;
+                          setDialogState(() => installing = false);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                error.toString().replaceFirst(
+                                  'Exception: ',
+                                  '',
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('Ilova ichida yangilash'),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
