@@ -226,6 +226,13 @@ class AcademyModule {
   bool isTopicFree(int index) => index < freeTopicLimit;
 }
 
+class VideoLessonChapter {
+  const VideoLessonChapter({required this.time, required this.title});
+
+  final Duration time;
+  final String title;
+}
+
 class LessonMaterial {
   const LessonMaterial({
     required this.kind,
@@ -234,6 +241,7 @@ class LessonMaterial {
     this.url = '',
     this.duration = Duration.zero,
     this.sourceType = '',
+    this.chapters = const [],
   });
 
   final String kind;
@@ -242,6 +250,7 @@ class LessonMaterial {
   final String url;
   final Duration duration;
   final String sourceType;
+  final List<VideoLessonChapter> chapters;
 
   bool get isVideo => kind == 'video';
   bool get isPdf => kind == 'pdf' || kind == 'external_pdf';
@@ -268,6 +277,7 @@ class TopicLesson {
     this.coverUrl = '',
     this.pdfUrl = '',
     this.videoUrl = '',
+    this.videoChapters = const [],
     this.quizQuestions = const [],
     this.materials = const [],
     this.isFreePreview = true,
@@ -287,6 +297,7 @@ class TopicLesson {
   final String coverUrl;
   final String pdfUrl;
   final String videoUrl;
+  final List<VideoLessonChapter> videoChapters;
   final List<QuizQuestion> quizQuestions;
   final List<LessonMaterial> materials;
   final bool isFreePreview;
@@ -780,9 +791,11 @@ class CommunityPost {
     required this.authorBadge,
     required this.content,
     required this.likes,
+    this.dislikes = 0,
     required this.reposts,
     required this.replies,
     required this.isLiked,
+    this.isDisliked = false,
     required this.isReposted,
     required this.isBookmarked,
     required this.createdAt,
@@ -799,9 +812,11 @@ class CommunityPost {
   final String authorBadge;
   final String content;
   final int likes;
+  final int dislikes;
   final int reposts;
   final int replies;
   final bool isLiked;
+  final bool isDisliked;
   final bool isReposted;
   final bool isBookmarked;
   final DateTime createdAt;
@@ -813,7 +828,7 @@ class CommunityPost {
   String get timeAgo {
     final now = DateTime.now();
     final difference = now.difference(createdAt);
-    
+
     if (difference.inMinutes < 1) return 'hozirgina';
     if (difference.inMinutes < 60) return '${difference.inMinutes}d';
     if (difference.inHours < 24) return '${difference.inHours}soat';
@@ -854,7 +869,7 @@ class CommunityReply {
   String get timeAgo {
     final now = DateTime.now();
     final difference = now.difference(createdAt);
-    
+
     if (difference.inMinutes < 1) return 'hozirgina';
     if (difference.inMinutes < 60) return '${difference.inMinutes}d';
     if (difference.inHours < 24) return '${difference.inHours}soat';
