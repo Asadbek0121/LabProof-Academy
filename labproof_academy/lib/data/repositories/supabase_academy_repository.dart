@@ -492,24 +492,33 @@ class SupabaseAcademyRepository {
         : profile.fullName.trim();
     final avatarUrl = profile.avatarUrl?.trim();
 
-    await _supabase
+    final payload = {
+      'id': user.id,
+      'full_name': fullName.isEmpty ? 'Student' : fullName,
+      'phone': phone.isEmpty ? null : phone,
+      'role': current.role.name,
+      'avatar_url': avatarUrl == null || avatarUrl.isEmpty
+          ? current.avatarUrl.trim()
+          : avatarUrl,
+      'gender': profile.gender.trim(),
+      'age': profile.age,
+      'region': profile.region.trim(),
+      'district': profile.district.trim(),
+      'mahalla': profile.mahalla.trim(),
+      'street': profile.street.trim(),
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+
+    final updated = await _supabase
         .from('profiles')
-        .upsert({
-          'id': user.id,
-          'full_name': fullName.isEmpty ? 'Student' : fullName,
-          'phone': phone.isEmpty ? null : phone,
-          'role': current.role.name,
-          'avatar_url': avatarUrl == null || avatarUrl.isEmpty
-              ? current.avatarUrl.trim()
-              : avatarUrl,
-          'gender': profile.gender.trim(),
-          'age': profile.age,
-          'region': profile.region.trim(),
-          'district': profile.district.trim(),
-          'mahalla': profile.mahalla.trim(),
-          'street': profile.street.trim(),
-          'updated_at': DateTime.now().toIso8601String(),
-        }, onConflict: 'id');
+        .update(payload)
+        .eq('id', user.id)
+        .select('id')
+        .maybeSingle();
+
+    if (updated == null) {
+      await _supabase.from('profiles').insert(payload);
+    }
 
     return _loadProfile(user);
   }
