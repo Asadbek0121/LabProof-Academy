@@ -14,6 +14,10 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
 
+    defaults:
+      run:
+        working-directory: labproof_academy
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,7 +49,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: labproof-academy-student-apk
-          path: build/web/downloads/labproof-academy-student.apk
+          path: labproof_academy/build/web/downloads/labproof-academy-student.apk
 
       - name: Publish latest APK release
         uses: softprops/action-gh-release@v2
@@ -53,7 +57,7 @@ jobs:
           tag_name: student-latest
           name: LabProof Academy Student Latest
           body: Latest student APK built from ${{ github.sha }}.
-          files: build/web/downloads/labproof-academy-student.apk
+          files: labproof_academy/build/web/downloads/labproof-academy-student.apk
           make_latest: true
           overwrite_files: true
 
@@ -68,7 +72,6 @@ jobs:
           python3 - <<'PY'
           import json
           import os
-          import subprocess
           import urllib.request
 
           version_line = ""
