@@ -62,13 +62,19 @@ jobs:
           overwrite_files: true
 
       - name: Register update in Supabase
-        if: ${{ secrets.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          APP_RELEASE_CHANNEL: ${{ vars.APP_RELEASE_CHANNEL || 'student' }}
+          APP_RELEASE_CHANNEL: ${{ vars.APP_RELEASE_CHANNEL }}
           DOWNLOAD_URL: https://github.com/${{ github.repository }}/releases/download/student-latest/labproof-academy-student.apk
         run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Supabase update secrets are not configured; APK release was still published."
+            exit 0
+          fi
+
+          export APP_RELEASE_CHANNEL="${APP_RELEASE_CHANNEL:-student}"
+
           python3 - <<'PY'
           import json
           import os
