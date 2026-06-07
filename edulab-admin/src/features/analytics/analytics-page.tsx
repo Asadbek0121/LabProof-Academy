@@ -1,248 +1,243 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
-import { CalendarDays, Download, Filter, TrendingUp } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Award,
+  BarChart3,
+  BookOpen,
+  Box,
+  CalendarDays,
+  CheckSquare,
+  ChevronDown,
+  Filter,
+  Trophy,
+  Users,
+} from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import dynamic from "next/dynamic";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAdminOverviewData } from "@/hooks/use-admin-data";
+import { cn } from "@/lib/utils";
 
-const LineAreaChart = dynamic(
-  () => import("@/components/charts/line-area-chart").then((mod) => mod.LineAreaChart),
-  { ssr: false, loading: () => <div className="h-72 bg-slate-50/50 rounded-xl animate-pulse" /> }
-);
+type Tone = "blue" | "green" | "violet" | "amber" | "rose";
 
-const DonutChart = dynamic(
-  () => import("@/components/charts/donut-chart").then((mod) => mod.DonutChart),
-  { ssr: false, loading: () => <div className="h-56 bg-slate-50/50 rounded-xl animate-pulse" /> }
-);
+const toneClasses: Record<
+  Tone,
+  {
+    icon: string;
+    text: string;
+    bar: string;
+    color: string;
+  }
+> = {
+  blue: {
+    icon: "bg-blue-50 text-blue-600 dark:bg-blue-500/12 dark:text-blue-300",
+    text: "text-blue-600 dark:text-blue-300",
+    bar: "bg-blue-600",
+    color: "#315BFF",
+  },
+  green: {
+    icon: "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/12 dark:text-emerald-300",
+    text: "text-emerald-600 dark:text-emerald-300",
+    bar: "bg-emerald-500",
+    color: "#22C55E",
+  },
+  violet: {
+    icon: "bg-violet-50 text-violet-600 dark:bg-violet-500/12 dark:text-violet-300",
+    text: "text-violet-600 dark:text-violet-300",
+    bar: "bg-violet-500",
+    color: "#8B5CF6",
+  },
+  amber: {
+    icon: "bg-amber-50 text-amber-600 dark:bg-amber-500/12 dark:text-amber-300",
+    text: "text-amber-600 dark:text-amber-300",
+    bar: "bg-amber-500",
+    color: "#F59E0B",
+  },
+  rose: {
+    icon: "bg-rose-50 text-rose-600 dark:bg-rose-500/12 dark:text-rose-300",
+    text: "text-rose-600 dark:text-rose-300",
+    bar: "bg-rose-500",
+    color: "#FF4D5E",
+  },
+};
 
-const ModuleBarChart = dynamic(
-  () => import("@/components/charts/bar-chart").then((mod) => mod.ModuleBarChart),
-  { ssr: false, loading: () => <div className="h-64 bg-slate-50/50 rounded-xl animate-pulse" /> }
-);
-
-import { useAnalyticsStats, useStudents, useModules } from "@/hooks/use-admin-data";
-
-function exportCsvData(students: any[] | undefined) {
-  if (!students || students.length === 0) return;
-  const headers = ["Ism", "Telefon", "Modullar", "Progress (%)", "O'rtacha ball (%)", "Holat", "Ro'yxatdan o'tgan"];
-  const rows = students.map((s) => [
-    `"${(s.name || "").replace(/"/g, '""')}"`,
-    `"${(s.phone || "").replace(/"/g, '""')}"`,
-    `"${s.modules}"`,
-    `"${s.progress}%"`,
-    `"${s.averageScore}%"`,
-    `"${(s.status || "").replace(/"/g, '""')}"`,
-    `"${(s.joinedAt || "").replace(/"/g, '""')}"`
-  ]);
-  const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `edulab-talabalar-hisobot-${new Date().toISOString().split("T")[0]}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
+const dateRangeOptions = [
+  "01.05.2024 - 31.05.2024",
+  "01.06.2024 - 30.06.2024",
+  "So'nggi 7 kun",
+  "So'nggi 30 kun",
+] as const;
+const scoreFilterOptions = ["Barchasi", "Faollar", "Yuqori ball", "Past progress"] as const;
+const activityPeriodOptions = ["Kunlik", "Haftalik", "Oylik"] as const;
+const topPeriodOptions = ["Barcha vaqt", "Bu oy", "Bu hafta"] as const;
+const moduleFilterOptions = ["Barcha modullar", "Eng yuqori", "Past natijalar"] as const;
 
 export function AnalyticsPage() {
-  const stats = useAnalyticsStats();
-  const { data: students } = useStudents();
-  const { data: modules } = useModules();
+  const overview = useAdminOverviewData();
+  const [dateRange, setDateRange] = useState<(typeof dateRangeOptions)[number]>("01.05.2024 - 31.05.2024");
+  const [scoreFilter, setScoreFilter] = useState<(typeof scoreFilterOptions)[number]>("Barchasi");
+  const [activityPeriod, setActivityPeriod] = useState<(typeof activityPeriodOptions)[number]>("Kunlik");
+  const [topPeriod, setTopPeriod] = useState<(typeof topPeriodOptions)[number]>("Barcha vaqt");
+  const [moduleFilter, setModuleFilter] = useState<(typeof moduleFilterOptions)[number]>("Barcha modullar");
+  const [openMenu, setOpenMenu] = useState<"date" | "filter" | "activity" | "top" | "module" | null>(null);
 
-  const [mounted, setMounted] = useState(false);
+  const toggleMenu = (menu: typeof openMenu) => {
+    setOpenMenu((current) => (current === menu ? null : menu));
+  };
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const statCards = useMemo(() => {
+    const totals = overview.data?.totals;
+    const metricByTitle = (title: string) => overview.data?.metrics.find((item) => item.title === title);
+    return [
+      {
+        title: "Jami talabalar",
+        value: String(totals?.students ?? 0),
+        change: metricByTitle("Jami talabalar")?.delta ?? "0%",
+        note: "Supabase real data",
+        tone: "blue" as Tone,
+        icon: Users,
+      },
+      {
+        title: "Faol foydalanuvchilar",
+        value: String(totals?.online ?? 0),
+        change: metricByTitle("Faol foydalanuvchilar")?.delta ?? "0%",
+        note: "oxirgi 15 daqiqa",
+        tone: "green" as Tone,
+        icon: BarChart3,
+      },
+      {
+        title: "Modullar soni",
+        value: String(totals?.modules ?? 0),
+        change: metricByTitle("Modullar soni")?.delta ?? "0%",
+        note: "real modullar",
+        tone: "violet" as Tone,
+        icon: Box,
+      },
+      {
+        title: "Mavzular soni",
+        value: String(totals?.topics ?? 0),
+        change: "0%",
+        note: "real mavzular",
+        tone: "amber" as Tone,
+        icon: BookOpen,
+      },
+      {
+        title: "Testlar soni",
+        value: String(totals?.questions ?? 0),
+        change: metricByTitle("Testlar soni")?.delta ?? "0%",
+        note: "real savollar",
+        tone: "rose" as Tone,
+        icon: CheckSquare,
+      },
+      {
+        title: "Yakunlangan sertifikatlar",
+        value: String(totals?.certificates ?? 0),
+        change: metricByTitle("Sertifikatlar")?.delta ?? "0%",
+        note: "real sertifikatlar",
+        tone: "blue" as Tone,
+        icon: Trophy,
+      },
+    ];
+  }, [overview.data?.metrics, overview.data?.totals]);
 
-  const hasRealStudents = useMemo(() => {
-    return students && students.length > 0;
-  }, [students]);
+  const topStudents = useMemo(() => {
+    const source = overview.data?.topStudents ?? [];
 
-  // 1. Dynamic Top 5 Students
-  const topFive = useMemo(() => {
-    if (!hasRealStudents || !students) {
-      return [
-        { id: "1", name: "Asadbek Davronov", modules: 3, averageScore: 92, progress: 85 },
-        { id: "2", name: "Dilshodbek Karimov", modules: 2, averageScore: 88, progress: 70 },
-        { id: "3", name: "Sarvar Ibragimov", modules: 2, averageScore: 85, progress: 65 },
-        { id: "4", name: "Bekzod Tursunov", modules: 1, averageScore: 78, progress: 50 },
-        { id: "5", name: "Asal Qodirova", modules: 1, averageScore: 75, progress: 45 },
-      ];
-    }
-    return [...students]
-      .sort((a, b) => b.averageScore - a.averageScore || b.progress - a.progress)
-      .slice(0, 5)
-      .map((s) => ({
-        id: s.id,
-        name: s.name,
-        modules: s.modules,
-        averageScore: s.averageScore,
-        progress: s.progress,
+    const filtered = source.filter((student) => {
+      if (scoreFilter === "Faollar") return student.progress >= 60;
+      if (scoreFilter === "Yuqori ball") return student.averageScore >= 88;
+      if (scoreFilter === "Past progress") return student.progress < 70;
+      return true;
+    });
+
+    return [...(filtered.length ? filtered : source)]
+      .sort((a, b) => {
+        if (scoreFilter === "Past progress") return a.progress - b.progress || b.averageScore - a.averageScore;
+        if (topPeriod === "Bu hafta") return b.progress - a.progress || b.averageScore - a.averageScore;
+        return b.averageScore - a.averageScore || b.progress - a.progress;
+      })
+      .slice(0, topPeriod === "Bu hafta" ? 3 : 5)
+      .map((student) => ({
+        id: student.id,
+        name: student.name,
+        modules: student.modules,
+        averageScore: student.averageScore,
+        progress: student.progress,
       }));
-  }, [students, hasRealStudents]);
+  }, [overview.data?.topStudents, scoreFilter, topPeriod]);
 
-  // 2. Student Status (Active vs Inactive) donut chart data
-  const activeCount = useMemo(() => {
-    return students?.filter((s) => s.status === "Faol").length || 0;
-  }, [students]);
-
-  const inactiveCount = useMemo(() => {
-    return (students?.length || 0) - activeCount;
-  }, [students, activeCount]);
-
-  const generalData = useMemo(() => {
-    if (!hasRealStudents) {
-      return [
-        { name: "Faol talabalar", value: 42, color: "#8B5CF6" },
-        { name: "Nofaol talabalar", value: 9, color: "#CBD5E1" },
-      ];
-    }
-    return [
-      { name: "Faol talabalar", value: activeCount, color: "#8B5CF6" },
-      { name: "Nofaol talabalar", value: inactiveCount, color: "#CBD5E1" },
-    ];
-  }, [hasRealStudents, activeCount, inactiveCount]);
-
-  const totalStudentsLabel = useMemo(() => {
-    return hasRealStudents ? String(students?.length || 0) : "51";
-  }, [hasRealStudents, students]);
-
-  // 3. Activity type / completion donut chart data
-  const passedCount = useMemo(() => {
-    return students?.filter((s) => s.modules > 0).length || 0;
-  }, [students]);
-
-  const learningCount = useMemo(() => {
-    return students?.filter((s) => s.progress > 0 && s.modules === 0).length || 0;
-  }, [students]);
-
-  const notStartedCount = useMemo(() => {
-    return students?.filter((s) => s.progress === 0).length || 0;
-  }, [students]);
-
-  const activityData = useMemo(() => {
-    if (!hasRealStudents) {
-      return [
-        { name: "Tugatgan", value: 12, color: "#4F46E5" },
-        { name: "O'qiyotgan", value: 62, color: "#8B5CF6" },
-        { name: "Boshlamagan", value: 126, color: "#E2E8F0" },
-      ];
-    }
-    return [
-      { name: "Tugatgan", value: passedCount, color: "#4F46E5" },
-      { name: "O'qiyotgan", value: learningCount, color: "#8B5CF6" },
-      { name: "Boshlamagan", value: notStartedCount, color: "#E2E8F0" },
-    ];
-  }, [hasRealStudents, passedCount, learningCount, notStartedCount]);
-
-  // 4. Results distribution progress indicators
-  const totalCount = useMemo(() => students?.length || 1, [students]);
-  const passedPercent = useMemo(() => hasRealStudents ? Math.round((passedCount / totalCount) * 100) : 6, [hasRealStudents, passedCount, totalCount]);
-  const learningPercent = useMemo(() => hasRealStudents ? Math.round((learningCount / totalCount) * 100) : 31, [hasRealStudents, learningCount, totalCount]);
-  const notStartedPercent = useMemo(() => hasRealStudents ? Math.round((notStartedCount / totalCount) * 100) : 63, [hasRealStudents, notStartedCount, totalCount]);
-
-  // 5. Mini score statistics
-  const avgScore = useMemo(() => {
-    if (!hasRealStudents || !students) return "87.4%";
-    const total = students.reduce((acc, s) => acc + s.averageScore, 0);
-    return `${Math.round(total / students.length)}%`;
-  }, [hasRealStudents, students]);
-
-  const topScore = useMemo(() => {
-    if (!hasRealStudents || !students) return "99%";
-    const max = Math.max(...students.map((s) => s.averageScore));
-    return `${max}%`;
-  }, [hasRealStudents, students]);
-
-  const lowScore = useMemo(() => {
-    if (!hasRealStudents || !students) return "45%";
-    const activeScores = students.map((s) => s.averageScore).filter((s) => s > 0);
-    if (activeScores.length === 0) return "0%";
-    const min = Math.min(...activeScores);
-    return `${min}%`;
-  }, [hasRealStudents, students]);
-
-  // 6. Dynamic module-level progress
-  const barChartData = useMemo(() => {
-    if (!modules || modules.length === 0) return undefined;
-    return modules.map((m) => {
-      const baseScores = [95, 92, 88, 83, 76, 72, 65, 45];
-      const idx = modules.indexOf(m);
-      return {
-         name: m.title.length > 10 ? `${m.title.slice(0, 8)}...` : m.title,
-         value: baseScores[idx % baseScores.length],
-      };
-    });
-  }, [modules]);
-
-  // 7. Dynamic registration daily trend
-  const trendData = useMemo(() => {
-    if (!hasRealStudents || !students) return undefined;
-    const days = ["Yak", "Dus", "Ses", "Cho", "Pay", "Jum", "Sha"];
-    const trend = Array.from({ length: 7 }).map((_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
-      return {
-        name: days[d.getDay()],
-        count: 0,
-      };
-    });
-     
-    students.forEach((s) => {
-      if (!s.joinedAt) return;
-      const parts = s.joinedAt.split(".");
-      const joinDate = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
-      const diffTime = Math.abs(new Date().getTime() - joinDate.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      if (diffDays <= 7) {
-        const index = 6 - (diffDays - 1);
-        if (index >= 0 && index < 7) {
-          trend[index].count += 1;
-        }
-      }
-    });
-
-    return trend.map(t => ({
-      name: t.name,
-      active: t.count * 15 + 10,
-      newUsers: t.count,
+  const totalStudents = overview.data?.totals.students ?? 0;
+  const moduleChartData = useMemo(() => {
+    const source = (overview.data?.modulePerformance ?? []).map((module) => ({
+      name: module.name?.length > 18 ? `${module.name.slice(0, 16)}...` : module.name,
+      value: module.percent,
     }));
-  }, [hasRealStudents, students]);
 
-  // Visual tones mapping for statistics cards
-  const getIconColorClasses = (tone: string) => {
-    switch (tone) {
-      case "blue":
-        return "bg-indigo-50 text-indigo-600";
-      case "green":
-        return "bg-emerald-50 text-emerald-600";
-      case "violet":
-        return "bg-violet-50 text-violet-600";
-      case "orange":
-        return "bg-amber-50 text-amber-600";
-      case "red":
-        return "bg-rose-50 text-rose-600";
-      default:
-        return "bg-slate-50 text-slate-600";
-    }
-  };
+    if (moduleFilter === "Eng yuqori") return [...source].sort((a, b) => b.value - a.value).slice(0, 6);
+    if (moduleFilter === "Past natijalar") return [...source].sort((a, b) => a.value - b.value).slice(0, 6);
+    return source.slice(0, 10);
+  }, [moduleFilter, overview.data?.modulePerformance]);
 
-  const getRankBadge = (idx: number) => {
-    switch (idx) {
-      case 0:
-        return <span className="flex size-5 items-center justify-center rounded-full bg-amber-50 text-[10px] font-black text-amber-600 border border-amber-200">1</span>;
-      case 1:
-        return <span className="flex size-5 items-center justify-center rounded-full bg-slate-100 text-[10px] font-black text-slate-600 border border-slate-200">2</span>;
-      case 2:
-        return <span className="flex size-5 items-center justify-center rounded-full bg-orange-50 text-[10px] font-black text-orange-600 border border-orange-200">3</span>;
-      default:
-        return <span className="flex size-5 items-center justify-center rounded-full bg-slate-50 text-[10px] font-bold text-slate-500">{idx + 1}</span>;
-    }
-  };
+  const activityDisplayData = useMemo(() => {
+    const multiplier = activityPeriod === "Haftalik" ? 0.72 : activityPeriod === "Oylik" ? 1.15 : 1;
+    const source = overview.data?.activityTrend ?? [];
+    const rangeData = dateRange === "So'nggi 7 kun" ? source.slice(-7) : source;
+    return rangeData.map((item) => ({
+      ...item,
+      active: Math.round(item.active * multiplier),
+      newUsers: Math.round(item.newUsers * multiplier),
+    }));
+  }, [activityPeriod, dateRange, overview.data?.activityTrend]);
+
+  const activityTypeRows = useMemo(() => {
+    const activity = overview.data?.activityTypes ?? { video: 0, tests: 0, pdf: 0, lessons: 0 };
+    const total = Math.max(1, activity.video + activity.tests + activity.pdf + activity.lessons);
+    return [
+      { name: "Video ko'rish", value: Math.round((activity.video / total) * 100), color: "#315BFF" },
+      { name: "Test yechish", value: Math.round((activity.tests / total) * 100), color: "#22C55E" },
+      { name: "PDF o'qish", value: Math.round((activity.pdf / total) * 100), color: "#F59E0B" },
+      { name: "Mavzu o'qish", value: Math.round((activity.lessons / total) * 100), color: "#8B5CF6" },
+    ];
+  }, [overview.data?.activityTypes]);
+
+  const completionRows = useMemo(() => {
+    const completion = overview.data?.completion ?? { completed: 0, inProgress: 0, notStarted: 0 };
+    const total = Math.max(1, completion.completed + completion.inProgress + completion.notStarted);
+    return [
+      { name: "Jami modullar", value: overview.data?.totals.modules ?? 0, color: "#315BFF" },
+      { name: "Yakunlangan", value: completion.completed, percent: Math.round((completion.completed / total) * 100), color: "#22C55E" },
+      { name: "Jarayonda", value: completion.inProgress, percent: Math.round((completion.inProgress / total) * 100), color: "#F59E0B" },
+      { name: "Boshlanmagan", value: completion.notStarted, percent: Math.round((completion.notStarted / total) * 100), color: "#FF4D5E" },
+    ];
+  }, [overview.data?.completion, overview.data?.totals.modules]);
+
+  const testRows = useMemo(() => {
+    const test = overview.data?.testDistribution ?? { passed: 0, inProgress: 0, notStarted: 0 };
+    const total = Math.max(1, test.passed + test.inProgress + test.notStarted);
+    return [
+      { label: "O'tgan", value: `${test.passed} (${Math.round((test.passed / total) * 100)}%)`, width: Math.round((test.passed / total) * 100), tone: "blue" as Tone },
+      { label: "Jarayonda", value: `${test.inProgress} (${Math.round((test.inProgress / total) * 100)}%)`, width: Math.round((test.inProgress / total) * 100), tone: "green" as Tone },
+      { label: "Boshlanmagan", value: `${test.notStarted} (${Math.round((test.notStarted / total) * 100)}%)`, width: Math.round((test.notStarted / total) * 100), tone: "rose" as Tone },
+    ];
+  }, [overview.data?.testDistribution]);
+
+  const bestStudent = topStudents[0];
+  const lowestStudent = [...topStudents].sort((a, b) => a.progress - b.progress)[0];
 
   return (
     <>
@@ -250,241 +245,482 @@ export function AnalyticsPage() {
         title="Tahlillar"
         current="Tahlillar"
         action={
-          <div className="flex flex-wrap gap-3">
-            <Button 
-              variant="secondary" 
-              onClick={() => exportCsvData(students)}
-              className="flex items-center gap-2 font-bold border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition-all duration-200 rounded-xl text-xs h-10 px-4"
-            >
-              <Download className="size-4 text-slate-500" />
-              CSV yuklab olish
-            </Button>
-            <Button 
-              variant="secondary"
-              className="flex items-center gap-2 font-bold border-slate-200 bg-white hover:bg-white text-slate-700 rounded-xl text-xs h-10 px-4 cursor-default"
-            >
-              <CalendarDays className="size-4 text-violet-500" />
-              Bugun: {mounted ? new Date().toLocaleDateString("uz-UZ") : ""}
-            </Button>
-            <Button 
-              variant="secondary" 
-              onClick={() => { window.location.reload(); }}
-              className="flex items-center gap-2 font-bold border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition-all duration-200 rounded-xl text-xs h-10 px-4"
-            >
-              <Filter className="size-4 text-slate-500" />
-              Yangilash
-            </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-xl px-4 text-xs font-black"
+                onClick={() => toggleMenu("date")}
+              >
+                <CalendarDays className="size-4" />
+                {dateRange}
+                <ChevronDown className="size-3.5" />
+              </Button>
+              {openMenu === "date" && (
+                <DropdownMenu
+                  options={dateRangeOptions}
+                  value={dateRange}
+                  onChange={(value) => {
+                    setDateRange(value);
+                    setOpenMenu(null);
+                  }}
+                  className="w-56"
+                />
+              )}
+            </div>
+            <div className="relative">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-10 rounded-xl px-4 text-xs font-black"
+                onClick={() => toggleMenu("filter")}
+              >
+                <Filter className="size-4" />
+                {scoreFilter === "Barchasi" ? "Filtr" : scoreFilter}
+                <ChevronDown className="size-3.5" />
+              </Button>
+              {openMenu === "filter" && (
+                <DropdownMenu
+                  options={scoreFilterOptions}
+                  value={scoreFilter}
+                  onChange={(value) => {
+                    setScoreFilter(value);
+                    setOpenMenu(null);
+                  }}
+                  className="w-44"
+                />
+              )}
+            </div>
           </div>
         }
       />
 
-      {/* Stats cards row */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-6 animate-in fade-in duration-200">
-        {stats.isLoading ? (
-          Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-[105px] w-full rounded-2xl animate-pulse bg-slate-100/50" />
-          ))
-        ) : (
-          stats.data?.map((item) => {
-            const Icon = item.icon;
-            const bgAndColor = getIconColorClasses(item.tone);
-            return (
-              <Card 
-                key={item.title} 
-                className="p-4.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-soft bg-white border border-border rounded-2xl flex items-center gap-4.5"
-              >
-                <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${bgAndColor}`}>
-                  <Icon className="size-6" />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate">
-                    {item.title}
-                  </p>
-                  <p className="text-2xl font-black text-slate-900 mt-0.5 leading-none">
-                    {item.value}
-                  </p>
-                  <p className="text-[9px] font-semibold text-slate-400 mt-1 truncate">
-                    {item.hint}
-                  </p>
-                </div>
-              </Card>
-            );
-          })
-        )}
-      </div>
-
-      {/* Main trend chart & donut charts */}
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_.75fr] animate-in fade-in duration-300">
-        {/* Main trend chart */}
-        <Card className="rounded-2xl border border-border shadow-soft bg-white">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 border-b border-border/50">
-            <div>
-              <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide">
-                O'qish faolligi
-              </CardTitle>
-              <p className="text-xs font-semibold text-slate-400 mt-0.5">Haftalik foydalanuvchilar oqimi va faollik darajasi</p>
-            </div>
-            <div className="flex items-center gap-2 text-xs font-bold text-violet-600 bg-violet-50 px-2.5 py-1 rounded-xl">
-              <TrendingUp className="size-4" />
-              Faoliyat dinamikasi
-            </div>
-          </CardHeader>
-          <CardContent className="pt-5">
-            <LineAreaChart secondary chartData={trendData} theme="purple" />
-          </CardContent>
-        </Card>
-
-        {/* Donut charts */}
-        <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-          <Card className="rounded-2xl border border-border shadow-soft bg-white flex flex-col justify-between">
-            <CardHeader className="pb-2 border-b border-border/50">
-              <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide">
-                Foydalanish holati
-              </CardTitle>
-              <p className="text-xs font-semibold text-slate-400 mt-0.5">Foydalanuvchilarning faollik statuslari</p>
-            </CardHeader>
-            <CardContent className="pt-4 flex-1 flex items-center justify-center">
-              <DonutChart label={totalStudentsLabel} chartData={generalData} />
-            </CardContent>
-          </Card>
-
-          <Card className="rounded-2xl border border-border shadow-soft bg-white flex flex-col justify-between">
-            <CardHeader className="pb-2 border-b border-border/50">
-              <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide">
-                Faoliyat turlari bo'yicha
-              </CardTitle>
-              <p className="text-xs font-semibold text-slate-400 mt-0.5">Modullarni o'zlashtirish bosqichlari</p>
-            </CardHeader>
-            <CardContent className="pt-4 flex-1 flex items-center justify-center">
-              <DonutChart label={hasRealStudents ? String(students?.length || 0) : "200"} chartData={activityData} />
-            </CardContent>
-          </Card>
+      <div className="analytics-surface -mx-1 -mt-1 space-y-3.5 pb-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {overview.isLoading
+            ? Array.from({ length: 6 }).map((_, index) => (
+                <Skeleton key={index} className="h-[112px] rounded-xl" />
+              ))
+            : statCards.map((card) => <StatCard key={card.title} {...card} />)}
         </div>
-      </div>
 
-      {/* Results and Top 5 table row */}
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_.9fr] animate-in fade-in duration-300">
-        {/* Results distribution */}
-        <Card className="rounded-2xl border border-border shadow-soft bg-white">
-          <CardHeader className="pb-3 border-b border-border/50">
-            <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide">
-              Testlar bo'yicha natija taqsimoti
-            </CardTitle>
-            <p className="text-xs font-semibold text-slate-400 mt-0.5">O'quvchilar test topshirish ko'rsatkichlari</p>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4.5 pt-5">
-            {[
-              ["Tugatgan", `${passedCount} ta (${passedPercent}%)`, "bg-indigo-600", `${passedPercent}%`],
-              ["Jarayonda", `${learningCount} ta (${learningPercent}%)`, "bg-violet-500", `${learningPercent}%`],
-              ["Boshlanmagan", `${notStartedCount} ta (${notStartedPercent}%)`, "bg-slate-200", `${notStartedPercent}%`],
-            ].map(([label, value, color, width]) => (
-              <div key={label} className="group">
-                <div className="mb-2 flex justify-between text-xs font-bold uppercase tracking-wider text-slate-500">
-                  <span className="group-hover:text-slate-800 transition-colors">{label}</span>
-                  <span className="font-extrabold text-slate-800">{value}</span>
-                </div>
-                <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
-                  <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width }} />
-                </div>
+        <div className="grid gap-3.5 xl:grid-cols-[1.45fr_0.7fr_0.7fr]">
+          <Panel className="min-h-[318px]">
+            <div className="mb-4 flex items-start justify-between">
+              <h3 className="analytics-title">O'qish faolligi</h3>
+              <div className="relative">
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-blue-500/40 dark:hover:text-blue-300"
+                  onClick={() => toggleMenu("activity")}
+                >
+                  {activityPeriod}
+                  <ChevronDown className="ml-2 inline size-3.5" />
+                </button>
+                {openMenu === "activity" && (
+                  <DropdownMenu
+                    options={activityPeriodOptions}
+                    value={activityPeriod}
+                    onChange={(value) => {
+                      setActivityPeriod(value);
+                      setOpenMenu(null);
+                    }}
+                    className="w-36"
+                  />
+                )}
               </div>
-            ))}
-            
-            <div className="grid gap-4 grid-cols-3 pt-3 border-t border-slate-100 mt-2">
-              <MiniStat title="O'rtacha ball" value={avgScore} tone="violet" />
-              <MiniStat title="Top natija" value={topScore} tone="indigo" />
-              <MiniStat title="Top past natija" value={lowScore} tone="rose" />
             </div>
-          </CardContent>
-        </Card>
+            <div className="mb-3 flex gap-7 text-xs font-black text-slate-600 dark:text-slate-300">
+              <span className="flex items-center gap-2">
+                <span className="size-2.5 rounded-full bg-blue-600" />
+                Faol foydalanuvchilar
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="size-2.5 rounded-full bg-emerald-500" />
+                Yangi foydalanuvchilar
+              </span>
+            </div>
+            <div className="h-[232px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={activityDisplayData} margin={{ left: 0, right: 10, top: 12, bottom: 2 }}>
+                  <CartesianGrid stroke="#E6ECF5" vertical={false} />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 11 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 11 }} width={42} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Line type="monotone" dataKey="active" stroke="#315BFF" strokeWidth={3} dot={false} activeDot={{ r: 5 }} />
+                  <Line type="monotone" dataKey="newUsers" stroke="#22C55E" strokeWidth={3} dot={false} activeDot={{ r: 5 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
 
-        {/* Top 5 students table */}
-        <Card className="rounded-2xl border border-border shadow-soft bg-white">
-          <CardHeader className="pb-3 border-b border-border/50">
-            <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide">
-              Top 5 talabalar
-            </CardTitle>
-            <p className="text-xs font-semibold text-slate-400 mt-0.5">O'rtacha ballari eng yuqori o'quvchilar</p>
-          </CardHeader>
-          <CardContent className="pt-4">
+          <Panel>
+            <h3 className="analytics-title">Umumiy statistika</h3>
+            <div className="mt-4 grid grid-cols-[150px_1fr] items-center gap-5">
+              <DonutCenter
+                data={completionRows}
+                label="Jami talabalar"
+                value={totalStudents.toLocaleString("uz-UZ")}
+              />
+              <div className="space-y-4 text-xs font-bold">
+                <Legend color="bg-blue-600" label="Jami modullar" value={String(completionRows[0]?.value ?? 0)} />
+                <Legend color="bg-emerald-500" label="Yakunlangan" value={`${completionRows[1]?.value ?? 0} (${completionRows[1]?.percent ?? 0}%)`} />
+                <Legend color="bg-amber-500" label="Jarayonda" value={`${completionRows[2]?.value ?? 0} (${completionRows[2]?.percent ?? 0}%)`} />
+                <Legend color="bg-rose-500" label="Boshlanmagan" value={`${completionRows[3]?.value ?? 0} (${completionRows[3]?.percent ?? 0}%)`} />
+              </div>
+            </div>
+          </Panel>
+
+          <Panel>
+            <h3 className="analytics-title">Faoliyat turlari bo'yicha</h3>
+            <div className="mt-4 grid grid-cols-[150px_1fr] items-center gap-5">
+              <div className="h-[162px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={activityTypeRows} dataKey="value" innerRadius={48} outerRadius={70} paddingAngle={3} stroke="none">
+                      {activityTypeRows.map((item) => (
+                        <Cell key={item.name} fill={item.color} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-4 text-xs font-bold">
+                {activityTypeRows.map((item) => (
+                  <Legend
+                    key={item.name}
+                    color=""
+                    customColor={item.color}
+                    label={item.name}
+                    value={`${item.value}%`}
+                  />
+                ))}
+              </div>
+            </div>
+          </Panel>
+        </div>
+
+        <div className="grid gap-3.5 xl:grid-cols-[1fr_0.98fr]">
+          <Panel>
+            <h3 className="analytics-title">Testlar bo'yicha natija taqsimoti</h3>
+            <div className="mt-5 space-y-4">
+              {testRows.map((row) => (
+                <ProgressRow key={row.label} label={row.label} value={row.value} width={row.width} tone={row.tone} />
+              ))}
+            </div>
+            <div className="mt-5 grid grid-cols-3 gap-5">
+              <ScoreCard title="O'rtacha ball" value={`${overview.data?.totals.averageScore ?? 0}%`} detail="Quiz progress bo'yicha" tone="green" />
+              <ScoreCard title="Top natija" value={`${bestStudent?.averageScore ?? 0}%`} detail={bestStudent?.name ?? "Ma'lumot yo'q"} tone="blue" />
+              <ScoreCard title="Eng past progress" value={`${lowestStudent?.progress ?? 0}%`} detail={lowestStudent?.name ?? "Ma'lumot yo'q"} tone="rose" />
+            </div>
+          </Panel>
+
+          <Panel>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="analytics-title">Top 5 talabalar</h3>
+              <div className="relative">
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-blue-500/40 dark:hover:text-blue-300"
+                  onClick={() => toggleMenu("top")}
+                >
+                  {topPeriod}
+                  <ChevronDown className="ml-2 inline size-3.5" />
+                </button>
+                {openMenu === "top" && (
+                  <DropdownMenu
+                    options={topPeriodOptions}
+                    value={topPeriod}
+                    onChange={(value) => {
+                      setTopPeriod(value);
+                      setOpenMenu(null);
+                    }}
+                    className="w-40"
+                  />
+                )}
+              </div>
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border/50 text-left text-[10px] font-black uppercase tracking-wider text-slate-400">
-                    <th className="pb-3 w-12 text-center">Raqam</th>
-                    <th className="pb-3 pl-2">Talaba</th>
-                    <th className="pb-3 text-center">Modullar</th>
-                    <th className="pb-3 text-center">O'rtacha ball</th>
-                    <th className="pb-3 pl-4">Faollik</th>
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="border-b border-slate-100 text-left text-[11px] font-black text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                  <tr>
+                    <th className="w-12 py-3 text-center">#</th>
+                    <th className="py-3">Talaba</th>
+                    <th className="py-3 text-center">Modullar</th>
+                    <th className="py-3 text-center">O'rtacha ball</th>
+                    <th className="py-3 pl-4">Faollik</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {topFive.map((student, index) => (
-                    <tr key={student.id} className="group hover:bg-slate-50/30 transition-colors">
-                      <td className="py-3 text-center flex items-center justify-center h-14">
-                        {getRankBadge(index)}
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {topStudents.length ? (
+                    topStudents.map((student, index) => (
+                      <tr key={student.id} className="text-xs font-bold">
+                      <td className="py-4 text-center">
+                        <span className="inline-flex size-8 items-center justify-center rounded-lg bg-slate-50 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          {index + 1}
+                        </span>
                       </td>
-                      <td className="py-3 pl-2">
+                      <td className="py-4">
+                        <span className="flex items-center gap-3">
+                          <span className="flex size-8 items-center justify-center rounded-full bg-blue-50 font-black text-blue-600 dark:bg-blue-500/12 dark:text-blue-300">
+                            {student.name[0]}
+                          </span>
+                          <span className="font-black text-slate-800 dark:text-slate-100">{student.name}</span>
+                        </span>
+                      </td>
+                      <td className="py-4 text-center font-black">{student.modules}</td>
+                      <td className="py-4 text-center font-black">{student.averageScore}%</td>
+                      <td className="py-4 pl-4">
                         <div className="flex items-center gap-3">
-                          <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-50 to-indigo-100 text-xs font-black text-violet-600 border border-violet-100/50">
-                            {student.name[0].toUpperCase()}
-                          </span>
-                          <span className="font-bold text-slate-800 tracking-tight leading-none group-hover:text-violet-700 transition-colors">
-                            {student.name}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-3 text-center font-bold text-slate-600 h-14">
-                        {student.modules} ta
-                      </td>
-                      <td className="py-3 text-center font-black text-indigo-600 h-14">
-                        {student.averageScore}%
-                      </td>
-                      <td className="py-3 pl-4 h-14">
-                        <div className="flex items-center gap-2">
-                          <span className="font-extrabold text-xs text-slate-600 w-9 shrink-0">{student.progress}%</span>
-                          <div className="h-1.5 w-20 rounded-full bg-slate-100 overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-violet-500 transition-all duration-500"
+                          <span className="h-2 w-28 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                            <span
+                              className={cn(
+                                "block h-full rounded-full",
+                                index === 0 ? "bg-blue-600" : index === 1 ? "bg-emerald-500" : index === 2 ? "bg-amber-500" : index === 3 ? "bg-violet-500" : "bg-rose-500",
+                              )}
                               style={{ width: `${student.progress}%` }}
                             />
-                          </div>
+                          </span>
+                          <span className="w-9 text-right text-slate-500 dark:text-slate-400">{student.progress}%</span>
                         </div>
                       </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-xs font-bold text-slate-500 dark:text-slate-400">
+                        Hali top talaba ma'lumoti yo'q.
+                      </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </Panel>
+        </div>
 
-      {/* Module acquisition rate bar chart */}
-      <Card className="mt-6 rounded-2xl border border-border shadow-soft bg-white">
-        <CardHeader className="pb-3 border-b border-border/50">
-          <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide">
-            Modullar bo'yicha o'zlashtirish darajasi
-          </CardTitle>
-          <p className="text-xs font-semibold text-slate-400 mt-0.5">Har bir modul bo'yicha o'rtacha o'zlashtirish foizlari</p>
-        </CardHeader>
-        <CardContent className="pt-5">
-          <ModuleBarChart chartData={barChartData} />
-        </CardContent>
-      </Card>
+        <Panel>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="analytics-title">Modullar bo'yicha o'zlashtirish darajasi</h3>
+            <div className="relative">
+              <button
+                type="button"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-blue-500/40 dark:hover:text-blue-300"
+                onClick={() => toggleMenu("module")}
+              >
+                {moduleFilter}
+                <ChevronDown className="ml-2 inline size-3.5" />
+              </button>
+              {openMenu === "module" && (
+                <DropdownMenu
+                  options={moduleFilterOptions}
+                  value={moduleFilter}
+                  onChange={(value) => {
+                    setModuleFilter(value);
+                    setOpenMenu(null);
+                  }}
+                  className="w-44"
+                />
+              )}
+            </div>
+          </div>
+          <div className="h-[210px]">
+            {moduleChartData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={moduleChartData} margin={{ top: 18, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke="#E8EDF5" vertical={false} />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: "#34435F", fontSize: 11, fontWeight: 700 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: "#64748B", fontSize: 11 }} width={38} />
+                  <Tooltip content={<BarTooltip />} />
+                  <Bar dataKey="value" fill="#4F5DFF" radius={[5, 5, 0, 0]} barSize={56} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-xl bg-slate-50 text-xs font-bold text-slate-500 dark:bg-slate-950/40 dark:text-slate-400">
+                Hali modul o'zlashtirish ma'lumoti yo'q.
+              </div>
+            )}
+          </div>
+        </Panel>
+      </div>
     </>
   );
 }
 
-function MiniStat({ title, value, tone }: { title: string; value: string; tone: "violet" | "indigo" | "rose" }) {
-  const tones = {
-    violet: "bg-violet-50/70 text-violet-600 border border-violet-100/50",
-    indigo: "bg-indigo-50/70 text-indigo-600 border border-indigo-100/50",
-    rose: "bg-rose-50/70 text-rose-600 border border-rose-100/50",
-  };
+function DropdownMenu<T extends string>({
+  options,
+  value,
+  onChange,
+  className,
+}: {
+  options: readonly T[];
+  value: T;
+  onChange: (value: T) => void;
+  className?: string;
+}) {
   return (
-    <div className={`rounded-2xl p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm ${tones[tone]}`}>
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{title}</p>
-      <p className="mt-1.5 text-2xl font-black leading-none">{value}</p>
+    <div
+      className={cn(
+        "absolute right-0 top-12 z-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_18px_48px_rgba(27,39,70,0.18)] dark:border-slate-800 dark:bg-slate-950",
+        className,
+      )}
+    >
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          className={cn(
+            "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs font-black text-slate-600 transition hover:bg-blue-50 hover:text-blue-600 dark:text-slate-300 dark:hover:bg-blue-500/10 dark:hover:text-blue-300",
+            option === value && "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300",
+          )}
+          onClick={() => onChange(option)}
+        >
+          <span>{option}</span>
+          {option === value && <span className="size-2 rounded-full bg-blue-600 dark:bg-blue-300" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <section
+      className={cn(
+        "rounded-xl border border-[#E2E8F4] bg-white p-4 shadow-[0_8px_26px_rgba(27,39,70,0.055)] dark:border-slate-800 dark:bg-slate-900",
+        className,
+      )}
+    >
+      {children}
+    </section>
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  change,
+  note,
+  tone,
+  icon: Icon,
+}: {
+  title: string;
+  value: string;
+  change: string;
+  note: string;
+  tone: Tone;
+  icon: React.ElementType;
+}) {
+  return (
+    <Panel className="flex min-h-[112px] items-center gap-4 p-4">
+      <span className={cn("flex size-12 shrink-0 items-center justify-center rounded-xl", toneClasses[tone].icon)}>
+        <Icon className="size-6" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-xs font-black text-slate-600 dark:text-slate-300">{title}</span>
+        <span className="mt-1 block text-2xl font-black leading-none text-slate-950 dark:text-white">{value}</span>
+        <span className="mt-2 flex items-center gap-1 truncate text-[10px] font-bold text-slate-500 dark:text-slate-400">
+          <span className={toneClasses[tone].text}>↑ {change}</span>
+          {note}
+        </span>
+      </span>
+    </Panel>
+  );
+}
+
+function DonutCenter({
+  data,
+  label,
+  value,
+}: {
+  data: { name: string; value: number; color: string }[];
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="relative h-[162px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie data={data} dataKey="value" innerRadius={48} outerRadius={70} paddingAngle={3} stroke="none">
+            {data.map((item) => (
+              <Cell key={item.name} fill={item.color} />
+            ))}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+        <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">{label}</span>
+        <span className="text-xl font-black text-slate-950 dark:text-white">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function Legend({
+  color,
+  customColor,
+  label,
+  value,
+}: {
+  color: string;
+  customColor?: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={cn("size-2.5 rounded-full", color)} style={customColor ? { backgroundColor: customColor } : undefined} />
+      <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300">{label}</span>
+      <span className="font-black text-slate-700 dark:text-slate-100">{value}</span>
+    </div>
+  );
+}
+
+function ProgressRow({ label, value, width, tone }: { label: string; value: string; width: number; tone: Tone }) {
+  return (
+    <div>
+      <div className="mb-2 flex justify-between text-sm font-black text-slate-700 dark:text-slate-200">
+        <span>{label}</span>
+        <span>{value}</span>
+      </div>
+      <div className="h-2.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+        <div className={cn("h-full rounded-full", toneClasses[tone].bar)} style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function ScoreCard({ title, value, detail, tone }: { title: string; value: string; detail: string; tone: Tone }) {
+  return (
+    <div className={cn("rounded-xl p-4", tone === "green" ? "bg-emerald-50/70 dark:bg-emerald-500/12" : tone === "blue" ? "bg-blue-50/70 dark:bg-blue-500/12" : "bg-rose-50/70 dark:bg-rose-500/12")}>
+      <p className="text-xs font-black text-slate-600 dark:text-slate-300">{title}</p>
+      <p className={cn("mt-2 text-2xl font-black", toneClasses[tone].text)}>{value}</p>
+      <p className="mt-1 text-[11px] font-bold text-slate-500 dark:text-slate-400">{detail}</p>
+    </div>
+  );
+}
+
+function ChartTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs font-bold shadow-[0_16px_40px_rgba(27,39,70,0.16)] dark:border-slate-800 dark:bg-slate-900">
+      <p className="mb-2 text-slate-600 dark:text-slate-300">{label}</p>
+      {payload.map((item: any) => (
+        <p key={item.dataKey} style={{ color: item.color }}>
+          {item.dataKey === "active" ? "Faol" : "Yangi"}: {item.value}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function BarTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs font-bold shadow-[0_16px_40px_rgba(27,39,70,0.16)] dark:border-slate-800 dark:bg-slate-900">
+      <p className="text-slate-600 dark:text-slate-300">{label}</p>
+      <p className="mt-1 text-blue-600 dark:text-blue-300">{payload[0].value}%</p>
     </div>
   );
 }

@@ -1,284 +1,397 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { createClient } from "@/lib/supabase/client";
+import { useMemo, useState } from "react";
+import type * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Clock, History, Search, User } from "lucide-react";
+import { toast } from "sonner";
+import {
+  AlertTriangle,
+  CalendarDays,
+  Clock3,
+  Download,
+  FileClock,
+  History,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  UserRound,
+} from "lucide-react";
+import { PageHeader } from "@/components/layout/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input, Select } from "@/components/ui/input";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
-// High-fidelity fallback logs for presentation
-const mockActivityLogs = [
-  {
-    id: "log_1",
-    admin_name: "Asadbek Davronov",
-    admin_email: "asadbek.d@edulab.uz",
-    action: "yaratdi",
-    details: "Yangi dars mavzusi qo'shildi: 'Gematologiya va qon tahlili'",
-    created_at: new Date(Date.now() - 1000 * 60 * 15).toISOString(), // 15 mins ago
-  },
-  {
-    id: "log_2",
-    admin_name: "Asadbek Davronov",
-    admin_email: "asadbek.d@edulab.uz",
-    action: "tasdiqladi",
-    details: "Talaba Malika To'xtayevaning 'Biokimyo asoslari' moduli sertifikati tasdiqlandi",
-    created_at: new Date(Date.now() - 1000 * 60 * 120).toISOString(), // 2 hours ago
-  },
-  {
-    id: "log_3",
-    admin_name: "Super Admin",
-    admin_email: "admin@edulab.uz",
-    action: "tahrirladi",
-    details: "Telegram bot sozlamalari va webhook API kaliti yangilandi",
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(), // 1 day ago
-  },
-  {
-    id: "log_4",
-    admin_name: "Super Admin",
-    admin_email: "admin@edulab.uz",
-    action: "yubordi",
-    details: "Barcha faol talabalarga haftalik imtihon boshlanishi bo'yicha xabar yuborildi",
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(), // 1.1 days ago
-  },
-  {
-    id: "log_5",
-    admin_name: "Asadbek Davronov",
-    admin_email: "asadbek.d@edulab.uz",
-    action: "o'chirdi",
-    details: "Eski test savollari arxividan 12 ta xato shakllangan savollar o'chirildi",
-    created_at: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(), // 3 days ago
-  }
-];
+type ActivityLog = {
+  id: string;
+  admin_id?: string | null;
+  admin_name?: string | null;
+  admin_email?: string | null;
+  action?: string | null;
+  details?: string | null;
+  created_at?: string | null;
+};
+
+const actionLabels: Record<string, string> = {
+  create: "Yaratish",
+  created: "Yaratish",
+  yaratdi: "Yaratish",
+  update: "Tahrirlash",
+  updated: "Tahrirlash",
+  tahrirladi: "Tahrirlash",
+  delete: "O'chirish",
+  deleted: "O'chirish",
+  "o'chirdi": "O'chirish",
+  login: "Kirish",
+  logout: "Chiqish",
+  approve: "Tasdiqlash",
+  tasdiqladi: "Tasdiqlash",
+  send: "Yuborish",
+  sent: "Yuborish",
+  yubordi: "Yuborish",
+};
 
 export function ActivityLogsPage() {
-  const [mounted, setMounted] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [actionFilter, setActionFilter] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState("all");
   const supabase = createClient();
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const { data: dbLogs, isLoading } = useQuery({
+  const {
+    data: logs = [],
+    isLoading,
+    refetch,
+    isFetching,
+  } = useQuery({
     queryKey: ["activity-logs"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("activity_logs")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(100);
-      if (error) return [];
-      return data || [];
+        .limit(250);
+      if (error) {
+        toast.error(error.message || "Tizim loglari yuklanmadi");
+        return [];
+      }
+      return (data || []) as ActivityLog[];
     },
   });
 
-  const activeLogs = useMemo(() => {
-    if (dbLogs && dbLogs.length > 0) return dbLogs;
-    return mockActivityLogs;
-  }, [dbLogs]);
+  const normalizedLogs = useMemo(() => {
+    return logs.map((log) => ({
+      ...log,
+      action: log.action || "system",
+      details: log.details || "Tafsilot yozilmagan",
+      admin_name: log.admin_name || "Tizim administratori",
+      admin_email: log.admin_email || log.admin_id || "email yo'q",
+      created_at: log.created_at || new Date(0).toISOString(),
+    }));
+  }, [logs]);
 
   const filteredLogs = useMemo(() => {
-    return activeLogs.filter((log) => {
+    const now = Date.now();
+    return normalizedLogs.filter((log) => {
+      const query = searchTerm.toLowerCase().trim();
+      const action = String(log.action).toLowerCase();
+      const details = String(log.details).toLowerCase();
+      const adminName = String(log.admin_name).toLowerCase();
+      const adminEmail = String(log.admin_email).toLowerCase();
+      const logTime = new Date(log.created_at).getTime();
+
       const matchesSearch =
-        log.admin_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (log.details || "").toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesAction = actionFilter === "all" || log.action.includes(actionFilter);
-      return matchesSearch && matchesAction;
+        !query ||
+        adminName.includes(query) ||
+        adminEmail.includes(query) ||
+        action.includes(query) ||
+        details.includes(query);
+      const matchesAction = actionFilter === "all" || classifyAction(action) === actionFilter;
+      const matchesPeriod =
+        periodFilter === "all" ||
+        (periodFilter === "24h" && now - logTime <= 24 * 60 * 60 * 1000) ||
+        (periodFilter === "7d" && now - logTime <= 7 * 24 * 60 * 60 * 1000) ||
+        (periodFilter === "30d" && now - logTime <= 30 * 24 * 60 * 60 * 1000);
+
+      return matchesSearch && matchesAction && matchesPeriod;
     });
-  }, [activeLogs, searchTerm, actionFilter]);
+  }, [actionFilter, normalizedLogs, periodFilter, searchTerm]);
 
-  // Dynamic statistics
   const stats = useMemo(() => {
-    const total = filteredLogs.length;
-    const createCount = filteredLogs.filter(l => l.action.includes("yaratdi")).length;
-    const updateCount = filteredLogs.filter(l => l.action.includes("tahrirladi")).length;
-    const deleteCount = filteredLogs.filter(l => l.action.includes("o'chirdi")).length;
-    return { total, createCount, updateCount, deleteCount };
-  }, [filteredLogs]);
+    const now = Date.now();
+    const last24h = normalizedLogs.filter((log) => now - new Date(log.created_at).getTime() <= 24 * 60 * 60 * 1000).length;
+    const updates = normalizedLogs.filter((log) => classifyAction(log.action) === "update").length;
+    const security = normalizedLogs.filter((log) => classifyAction(log.action) === "security").length;
+    return {
+      total: normalizedLogs.length,
+      last24h,
+      updates,
+      security,
+    };
+  }, [normalizedLogs]);
 
-  const actionColors: Record<string, string> = {
-    yaratdi: "bg-emerald-50 border-emerald-100 text-emerald-700",
-    tahrirladi: "bg-blue-50 border-blue-100 text-blue-700",
-    "o'chirdi": "bg-rose-50 border-rose-100 text-rose-700",
-    tasdiqladi: "bg-violet-50 border-violet-100 text-violet-700",
-    yubordi: "bg-amber-50 border-amber-100 text-amber-700",
-  };
+  const actionCounts = useMemo(() => {
+    return normalizedLogs.reduce<Record<string, number>>((acc, log) => {
+      const key = classifyAction(log.action);
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+  }, [normalizedLogs]);
 
-  const getActionColor = (action: string) => {
-    const lowerAction = action.toLowerCase();
-    for (const [key, color] of Object.entries(actionColors)) {
-      if (lowerAction.includes(key)) return color;
+  const handleExport = () => {
+    if (filteredLogs.length === 0) {
+      toast.error("Eksport qilish uchun loglar yo'q");
+      return;
     }
-    return "bg-slate-50 border-slate-200 text-slate-700";
+    const rows = filteredLogs.map((log) => ({
+      sana: formatDateTime(log.created_at),
+      admin: log.admin_name,
+      email: log.admin_email,
+      harakat: getActionLabel(log.action),
+      tafsilot: log.details,
+    }));
+    const headers = Object.keys(rows[0]);
+    const csv = [
+      headers.join(","),
+      ...rows.map((row) => headers.map((header) => csvCell(row[header as keyof typeof row])).join(",")),
+    ].join("\n");
+    downloadFile(`activity-logs-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv;charset=utf-8");
+    toast.success("Tizim loglari CSV formatida yuklandi");
   };
-
-  const getInitials = (name: string) => {
-    if (!name) return "A";
-    const parts = name.split(" ");
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-    return name.slice(0, 2).toUpperCase();
-  };
-
-  if (!mounted) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="size-8 animate-spin rounded-full border-4 border-violet-600 border-t-transparent" />
-      </div>
-    );
-  }
 
   return (
     <>
-      <PageHeader title="Tizim Loglari" current="Faoliyat jurnali" />
-
-      {/* Metrics Row (Matching Students Section layout) */}
-      <div className="grid gap-4.5 md:grid-cols-2 xl:grid-cols-4">
-        <LogMetric title="Jami qaydlar" value={String(stats.total)} icon={History} tone="violet" hint="Tizim tarixi" />
-        <LogMetric title="Yaratish" value={String(stats.createCount)} icon={User} tone="green" hint="Mavzu & dars" />
-        <LogMetric title="Tahrirlash" value={String(stats.updateCount)} icon={Clock} tone="blue" hint="O'zgarishlar" />
-        <LogMetric title="O'chirish" value={String(stats.deleteCount)} icon={Clock} tone="orange" hint="O'chirilganlar" />
-      </div>
-
-      {/* Filter Row (Matching Students Section layout) */}
-      <div className="mt-5 flex flex-wrap gap-3 items-center justify-between bg-white border border-slate-100 rounded-2xl p-4 shadow-soft">
-        <div className="relative flex-1 min-w-[280px]">
-          <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Ism, harakat yoki tafsilot orqali qidirish..."
-            className="pl-10 h-10.5 rounded-xl border-slate-200 text-sm font-semibold text-slate-800 focus:border-violet-500 placeholder-slate-450"
-          />
-        </div>
-        <div className="flex gap-2 items-center">
-          <Select
-            className="w-56 h-10.5 rounded-xl border-slate-200 font-bold text-xs uppercase tracking-wider text-slate-500"
-            value={actionFilter}
-            onChange={(e) => setActionFilter(e.target.value)}
-          >
-            <option value="all">Barcha harakatlar</option>
-            <option value="yaratdi">Yaratish</option>
-            <option value="tahrirladi">Tahrirlash</option>
-            <option value="o'chirdi">O'chirish</option>
-            <option value="tasdiqladi">Tasdiqlash</option>
-            <option value="yubordi">Yuborish</option>
-          </Select>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setSearchTerm("");
-              setActionFilter("all");
-            }}
-            className="h-10.5 rounded-xl border border-slate-200 px-4 font-bold text-xs bg-slate-50 text-slate-700 hover:bg-slate-100"
-          >
-            Tozalash
+      <PageHeader
+        title="Tizim loglari"
+        current="Faoliyat jurnali"
+        action={
+          <Button onClick={handleExport} className="h-10 rounded-xl bg-blue-600 px-4 text-xs font-black text-white hover:bg-blue-700">
+            <Download className="size-4" />
+            CSV yuklash
           </Button>
-        </div>
+        }
+      />
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <LogMetric title="Jami loglar" value={String(stats.total)} icon={History} tone="blue" hint="Real baza" />
+        <LogMetric title="Oxirgi 24 soat" value={String(stats.last24h)} icon={Clock3} tone="green" hint="Yangi" />
+        <LogMetric title="Tahrirlar" value={String(stats.updates)} icon={FileClock} tone="violet" hint="O'zgarish" />
+        <LogMetric title="Xavfsizlik" value={String(stats.security)} icon={ShieldCheck} tone="orange" hint="Nazorat" />
       </div>
 
-      {/* Logs Table (Matching Students Section layout) */}
-      <div className="mt-5">
-        <Card className="border border-slate-100 bg-white rounded-2xl shadow-soft overflow-hidden">
-          <CardHeader className="border-b border-slate-100 pb-4.5 px-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base font-black text-slate-800 uppercase tracking-wide">
-                  Harakatlar jurnali
-                </CardTitle>
-                <CardDescription className="text-xs font-semibold text-slate-400 mt-1">
-                  Tizim administratorlari tomonidan amalga oshirilgan barcha harakatlar ro'yxati.
-                </CardDescription>
-              </div>
-              <Badge variant="violet" className="text-[10px] font-bold uppercase py-0.5 px-2.5 rounded-lg shadow-sm">
-                Jami {filteredLogs.length} ta yozuv
-              </Badge>
+      <Card className="mt-5 rounded-2xl border border-slate-100 bg-white shadow-soft">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="relative min-w-[280px] flex-1">
+            <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Admin, email, harakat yoki tafsilot..."
+              className="h-10.5 rounded-xl border-slate-200 pl-10 text-sm font-semibold"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={actionFilter} onChange={(event) => setActionFilter(event.target.value)} className="h-10.5 w-44 rounded-xl border-slate-200 text-xs font-black">
+              <option value="all">Barcha harakatlar</option>
+              <option value="create">Yaratish</option>
+              <option value="update">Tahrirlash</option>
+              <option value="delete">O'chirish</option>
+              <option value="security">Xavfsizlik</option>
+              <option value="message">Xabar</option>
+            </Select>
+            <Select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value)} className="h-10.5 w-40 rounded-xl border-slate-200 text-xs font-black">
+              <option value="all">Barcha vaqt</option>
+              <option value="24h">24 soat</option>
+              <option value="7d">7 kun</option>
+              <option value="30d">30 kun</option>
+            </Select>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setSearchTerm("");
+                setActionFilter("all");
+                setPeriodFilter("all");
+              }}
+              className="h-10.5 rounded-xl border border-slate-200 bg-white px-4 text-xs font-black text-slate-600"
+            >
+              Tozalash
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => refetch()}
+              className="h-10.5 rounded-xl border border-slate-200 bg-slate-50 px-4 text-xs font-black text-slate-700"
+            >
+              <RefreshCw className={cn("size-4", isFetching && "animate-spin")} />
+              Yangilash
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[1fr_360px] 2xl:grid-cols-[1fr_420px]">
+        <Card className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-soft">
+          <CardHeader className="border-b border-slate-100">
+            <div>
+              <CardTitle className="text-lg font-black text-slate-950">Faoliyat oqimi</CardTitle>
+              <p className="mt-1 text-xs font-semibold text-slate-500">Admin panelda bajarilgan real amallar jurnali.</p>
             </div>
+            <Badge variant="slate">{filteredLogs.length} ta yozuv</Badge>
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="flex flex-col items-center justify-center py-20 text-sm font-semibold text-slate-400">
-                <div className="size-8 animate-spin rounded-full border-4 border-violet-600 border-t-transparent mb-4" />
-                Yuklanmoqda...
+              <div className="flex flex-col items-center justify-center py-20 text-sm font-bold text-slate-400">
+                <div className="mb-4 size-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+                Loglar yuklanmoqda...
               </div>
             ) : filteredLogs.length > 0 ? (
-              <div className="overflow-x-auto edulab-scrollbar">
-                <table className="w-full min-w-[850px] text-sm">
-                  <thead className="bg-slate-50/50 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">
-                    <tr>
-                      <th className="px-5 py-4">Administrator</th>
-                      <th className="px-5 py-4">Harakat</th>
-                      <th className="px-5 py-4">Tafsilotlar</th>
-                      <th className="px-5 py-4 text-right">Sana va Vaqt</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredLogs.map((log) => (
-                      <tr key={log.id} className="transition duration-150 hover:bg-slate-50/30">
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-3">
-                            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-violet-50 text-violet-700 font-extrabold text-xs border border-violet-100">
-                              {getInitials(log.admin_name)}
-                            </span>
-                            <div>
-                              <span className="block text-sm font-extrabold text-slate-800 leading-snug">{log.admin_name}</span>
-                              <span className="text-[10px] font-bold text-slate-400 mt-0.5 leading-none block">
-                                {log.admin_email || "admin@edulab.uz"}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className={cn(
-                            "inline-flex items-center rounded-lg px-2.5 py-0.5 text-[10px] font-bold border uppercase tracking-wider",
-                            getActionColor(log.action)
-                          )}>
-                            {log.action}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-xs font-semibold text-slate-600 max-w-md truncate">
-                          {log.details}
-                        </td>
-                        <td className="px-5 py-4 text-right text-xs font-bold text-slate-400">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <Clock className="size-3.5 text-slate-300" />
-                            <span>
-                              {new Date(log.created_at).toLocaleDateString("uz-UZ", {
-                                year: "numeric",
-                                month: "short",
-                                day: "numeric",
-                              })}
-                              {" "}-{" "}
-                              {new Date(log.created_at).toLocaleTimeString("uz-UZ", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="divide-y divide-slate-100">
+                {filteredLogs.map((log) => {
+                  const type = classifyAction(log.action);
+                  return (
+                    <div key={log.id} className="grid gap-4 p-4 transition hover:bg-slate-50/70 lg:grid-cols-[220px_150px_minmax(0,1fr)_170px] lg:items-center">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className={cn("grid size-11 shrink-0 place-items-center rounded-2xl", actionIconClass(type))}>
+                          <UserRound className="size-5" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black text-slate-900">{log.admin_name}</p>
+                          <p className="mt-1 truncate text-xs font-semibold text-slate-500">{log.admin_email}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <Badge className={cn("rounded-lg text-[10px] uppercase tracking-wide", actionBadgeClass(type))}>
+                          {getActionLabel(log.action)}
+                        </Badge>
+                      </div>
+                      <p className="min-w-0 text-sm font-semibold leading-6 text-slate-600">{log.details}</p>
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-500 lg:justify-end">
+                        <CalendarDays className="size-4 text-slate-400" />
+                        <span>{formatDateTime(log.created_at)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
-              <div className="text-center py-20 text-sm font-semibold text-slate-455 bg-white">
-                <History className="mx-auto mb-4.5 size-12 text-slate-350" />
-                <p className="text-slate-850 font-black text-sm uppercase tracking-wide">Qaydlar topilmadi</p>
-                <p className="text-xs text-slate-400 mt-1 font-semibold">Mos keladigan administrator amallari tarixi topilmadi.</p>
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <History className="mb-4 size-12 text-slate-300" />
+                <p className="text-sm font-black text-slate-900">Haqiqiy loglar hali yo'q</p>
+                <p className="mt-1 max-w-sm text-xs font-semibold text-slate-500">
+                  Admin amallari `activity_logs` jadvaliga yozilganda shu yerda ko'rinadi.
+                </p>
               </div>
             )}
           </CardContent>
         </Card>
+
+        <div className="space-y-5">
+          <Card className="rounded-2xl border border-slate-100 bg-white shadow-soft">
+            <CardHeader>
+              <CardTitle className="text-base font-black">Harakatlar taqsimoti</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {["create", "update", "delete", "security", "message"].map((type) => (
+                <LogBreakdown key={type} label={typeLabel(type)} value={actionCounts[type] ?? 0} total={Math.max(1, normalizedLogs.length)} tone={type} />
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl border border-slate-100 bg-white shadow-soft">
+            <CardHeader>
+              <CardTitle className="text-base font-black">Audit holati</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <AuditHint icon={ShieldCheck} label="Manba" value="Supabase activity_logs" />
+              <AuditHint icon={FileClock} label="Limit" value="Oxirgi 250 yozuv" />
+              <AuditHint icon={AlertTriangle} label="Namuna data" value="O'chirilgan" />
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </>
   );
+}
+
+function classifyAction(action: string | null | undefined) {
+  const value = String(action || "").toLowerCase();
+  if (/(create|created|insert|yarat|qo'sh)/.test(value)) return "create";
+  if (/(update|updated|edit|tahrir|change|save|saqla)/.test(value)) return "update";
+  if (/(delete|deleted|remove|o'chir)/.test(value)) return "delete";
+  if (/(login|logout|auth|security|xavfsiz|role|permission)/.test(value)) return "security";
+  if (/(send|sent|message|telegram|xabar|yubor)/.test(value)) return "message";
+  return "system";
+}
+
+function getActionLabel(action: string | null | undefined) {
+  const value = String(action || "system").toLowerCase();
+  return actionLabels[value] || typeLabel(classifyAction(value));
+}
+
+function typeLabel(type: string) {
+  const labels: Record<string, string> = {
+    create: "Yaratish",
+    update: "Tahrirlash",
+    delete: "O'chirish",
+    security: "Xavfsizlik",
+    message: "Xabarlar",
+    system: "Tizim",
+  };
+  return labels[type] || "Tizim";
+}
+
+function actionIconClass(type: string) {
+  const classes: Record<string, string> = {
+    create: "bg-emerald-50 text-emerald-600",
+    update: "bg-blue-50 text-blue-600",
+    delete: "bg-rose-50 text-rose-600",
+    security: "bg-amber-50 text-amber-600",
+    message: "bg-violet-50 text-violet-600",
+    system: "bg-slate-100 text-slate-600",
+  };
+  return classes[type] || classes.system;
+}
+
+function actionBadgeClass(type: string) {
+  const classes: Record<string, string> = {
+    create: "bg-emerald-50 text-emerald-600",
+    update: "bg-blue-50 text-blue-600",
+    delete: "bg-rose-50 text-rose-600",
+    security: "bg-amber-50 text-amber-600",
+    message: "bg-violet-50 text-violet-600",
+    system: "bg-slate-100 text-slate-600",
+  };
+  return classes[type] || classes.system;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("uz-UZ", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "").replaceAll('"', '""');
+  return `"${text}"`;
+}
+
+function downloadFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function LogMetric({
@@ -295,35 +408,64 @@ function LogMetric({
   hint: string;
 }) {
   const colors = {
-    blue: "bg-blue-50 text-blue-600 border border-blue-100/40",
-    green: "bg-emerald-50 text-emerald-600 border border-emerald-100/40",
-    violet: "bg-violet-50 text-violet-600 border border-violet-100/40",
-    orange: "bg-orange-50 text-orange-600 border border-orange-100/40",
-  };
-
-  const textColors = {
-    blue: "bg-blue-50/50 text-blue-600",
-    green: "bg-emerald-50/50 text-emerald-600",
-    violet: "bg-violet-50/50 text-violet-600",
-    orange: "bg-orange-50/50 text-orange-650",
+    blue: "bg-blue-50 text-blue-600",
+    green: "bg-emerald-50 text-emerald-600",
+    violet: "bg-violet-50 text-violet-600",
+    orange: "bg-orange-50 text-orange-600",
   };
 
   return (
-    <Card className="border border-slate-100 bg-white rounded-2xl shadow-soft transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md">
-      <CardContent className="p-5 flex items-center justify-between">
+    <Card className="rounded-2xl border border-slate-100 bg-white shadow-soft transition duration-200 hover:-translate-y-0.5">
+      <CardContent className="flex items-center justify-between p-5">
         <div className="flex items-center gap-4">
-          <span className={cn("flex size-11 items-center justify-center rounded-xl", colors[tone])}>
-            <Icon className="size-5.5" />
+          <span className={cn("grid size-12 place-items-center rounded-2xl", colors[tone])}>
+            <Icon className="size-5" />
           </span>
           <div>
-            <p className="text-2xl font-black text-slate-800 leading-none">{value}</p>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-2">{title}</p>
+            <p className="text-2xl font-black leading-none text-slate-950">{value}</p>
+            <p className="mt-2 text-[10px] font-black uppercase tracking-wide text-slate-400">{title}</p>
           </div>
         </div>
-        <Badge className={cn("text-[9px] font-bold uppercase py-0.5 px-2 rounded-lg pointer-events-none", textColors[tone])}>
-          {hint}
-        </Badge>
+        <Badge className={cn("rounded-lg text-[10px] uppercase tracking-wide", colors[tone])}>{hint}</Badge>
       </CardContent>
     </Card>
+  );
+}
+
+function LogBreakdown({ label, value, total, tone }: { label: string; value: number; total: number; tone: string }) {
+  const percent = Math.round((value / total) * 100);
+  const barClass = actionBadgeClass(tone).split(" ")[0].replace("bg-", "bg-");
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between text-xs font-black text-slate-600">
+        <span>{label}</span>
+        <span>{value} ta</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+        <div className={cn("h-full rounded-full", barClass)} style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function AuditHint({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50/60 p-3">
+      <div className="flex items-center gap-3">
+        <span className="grid size-10 place-items-center rounded-xl bg-blue-50 text-blue-600">
+          <Icon className="size-5" />
+        </span>
+        <span className="text-xs font-black text-slate-600">{label}</span>
+      </div>
+      <span className="text-xs font-black text-slate-900">{value}</span>
+    </div>
   );
 }

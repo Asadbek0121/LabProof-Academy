@@ -4,13 +4,15 @@ import { useMemo, useState, useEffect } from "react";
 import type * as React from "react";
 import {
   Check,
+  Filter,
+  KeyRound,
+  LayoutGrid,
   LockKeyhole,
-  Palette,
+  MoreVertical,
   Plus,
   Search,
   ShieldCheck,
   Users,
-  X,
   Edit2,
   Trash2,
 } from "lucide-react";
@@ -20,30 +22,73 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { createClient } from "@/lib/supabase/client";
 import { permissions, roles } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 const modules = ["Talabalar", "Tahlillar", "Xabarnomalar", "Sertifikatlar", "Media", "Sozlamalar", "Rollar"];
+const moduleFilters = [
+  { value: "all", label: "Barcha modullar" },
+  { value: "learning", label: "O'quv modullari" },
+  { value: "student", label: "Student ilova" },
+];
 const colors = ["#7C3AED", "#2563EB", "#10B981", "#F59E0B", "#EF4444", "#0F172A"];
 
 export function RolesPage() {
   const [mounted, setMounted] = useState(false);
   const [rolesList, setRolesList] = useState(roles);
   const [searchQuery, setSearchQuery] = useState("");
+  const [moduleFilter, setModuleFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [editingRole, setEditingRole] = useState<any>(null);
+  const supabase = createClient();
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  const { data: profileRoles } = useQuery({
+    queryKey: ["role-user-counts"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("profiles").select("role");
+      if (error) return [];
+      return data || [];
+    },
+  });
+
+  const roleUserCounts = useMemo(() => {
+    return (profileRoles ?? []).reduce<Record<string, number>>((acc, profile) => {
+      const role = String(profile.role ?? "student").toLowerCase();
+      acc[role] = (acc[role] ?? 0) + 1;
+      return acc;
+    }, {});
+  }, [profileRoles]);
+
+  const enrichedRoles = useMemo(() => {
+    return rolesList.map((role) => ({
+      ...role,
+      users: roleUserCounts[role.name.toLowerCase()] ?? role.users,
+    }));
+  }, [roleUserCounts, rolesList]);
+
   const filteredRoles = useMemo(() => {
-    return rolesList.filter((role) =>
-      role.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      role.description.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [rolesList, searchQuery]);
+    return enrichedRoles.filter((role) => {
+      const query = searchQuery.toLowerCase();
+      const matchesQuery =
+        role.name.toLowerCase().includes(query) ||
+        role.description.toLowerCase().includes(query);
+      const matchesModule =
+        moduleFilter === "all" ||
+        role.moduleAccess.includes("all") ||
+        role.moduleAccess.includes(moduleFilter);
+      return matchesQuery && matchesModule;
+    });
+  }, [enrichedRoles, moduleFilter, searchQuery]);
+
+  const totalAssignedUsers = enrichedRoles.reduce((sum, role) => sum + role.users, 0);
+  const fullAccessRoles = enrichedRoles.filter((role) => role.moduleAccess.includes("all")).length;
 
   const handleCreateOrUpdateRole = (roleData: {
     id?: string;
@@ -107,107 +152,143 @@ export function RolesPage() {
         title="Rollar va Ruxsatlar"
         current="Rollar"
         action={
-          <Button onClick={handleOpenCreateModal} className="bg-violet-600 text-white hover:bg-violet-700 rounded-xl h-10 text-xs font-bold px-4 flex gap-1.5 shadow-sm">
+          <Button onClick={handleOpenCreateModal} className="h-10 rounded-xl bg-blue-600 px-4 text-xs font-black text-white shadow-sm hover:bg-blue-700">
             <Plus className="size-4" />
             Role yaratish
           </Button>
         }
       />
 
-      {/* Metrics Row (Matching Students Section layout) */}
-      <div className="grid gap-4.5 md:grid-cols-2 xl:grid-cols-4">
-        <RoleMetric title="Jami rollar" value={String(rolesList.length)} icon={ShieldCheck} tone="violet" hint="Tizim rollari" />
-        <RoleMetric title="Joriy Admin" value="1" icon={Users} tone="blue" hint="Super admin" />
-        <RoleMetric title="Harakatlar" value={String(permissions.length)} icon={LockKeyhole} tone="green" hint="Ruxsatnomalar" />
-        <RoleMetric title="Modul Access" value={String(modules.length)} icon={Palette} tone="orange" hint="Ruxsat etilgan" />
+      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
+        <RoleMetric title="Jami rollar" value={String(enrichedRoles.length)} icon={ShieldCheck} tone="blue" hint="RBAC guruhlari" />
+        <RoleMetric title="Biriktirilgan userlar" value={String(totalAssignedUsers)} icon={Users} tone="green" hint="profiles.role" />
+        <RoleMetric title="To'liq huquqli" value={String(fullAccessRoles)} icon={KeyRound} tone="violet" hint="all access" />
+        <RoleMetric title="Ruxsatlar" value={String(permissions.length)} icon={LockKeyhole} tone="orange" hint={`${modules.length} modul`} />
       </div>
 
-      {/* Filter Row (Matching Students Section layout) */}
-      <div className="mt-5 flex flex-wrap gap-3 items-center justify-between bg-white border border-slate-100 rounded-2xl p-4 shadow-soft">
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-soft">
         <div className="relative flex-1 min-w-[280px]">
           <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Rollar bo'yicha qidirish..."
-            className="pl-10 h-10.5 rounded-xl border-slate-200 text-sm font-semibold text-slate-800 focus:border-violet-500 placeholder-slate-450"
+            placeholder="Rol nomi yoki tavsifi bo'yicha qidirish..."
+            className="h-10.5 rounded-xl border-slate-200 pl-10 text-sm font-semibold text-slate-800 placeholder-slate-450 focus:border-blue-500"
           />
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={moduleFilter}
+            onChange={(event) => setModuleFilter(event.target.value)}
+            className="h-10.5 w-52 rounded-xl border-slate-200 text-xs font-black text-slate-600"
+          >
+            {moduleFilters.map((module) => (
+              <option key={module.value} value={module.value}>{module.label}</option>
+            ))}
+          </Select>
           <Button
             variant="secondary"
-            onClick={() => setSearchQuery("")}
-            className="h-10.5 rounded-xl border border-slate-200 px-4 font-bold text-xs bg-slate-50 text-slate-700 hover:bg-slate-100"
+            onClick={() => {
+              setSearchQuery("");
+              setModuleFilter("all");
+            }}
+            className="h-10.5 rounded-xl border border-slate-200 bg-slate-50 px-4 text-xs font-black text-slate-700 hover:bg-slate-100"
           >
+            <Filter className="size-4" />
             Tozalash
           </Button>
         </div>
       </div>
 
-      {/* Roles List Table (Matching Students Section layout) */}
-      <div className="mt-5">
-        <Card className="border border-slate-100 bg-white rounded-2xl shadow-soft overflow-hidden">
-          <CardContent className="p-0">
-            <div className="overflow-x-auto edulab-scrollbar">
-              <table className="w-full min-w-[800px] text-sm">
-                <thead className="bg-slate-50/50 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">
-                  <tr>
-                    <th className="px-5 py-4">Rol nomi</th>
-                    <th className="px-5 py-4">Tavsif</th>
-                    <th className="px-5 py-4 text-center">Foydalanuvchilar</th>
-                    <th className="px-5 py-4 text-center">Modullar</th>
-                    <th className="px-5 py-4 text-center">Ruxsatlar</th>
-                    <th className="px-5 py-4 text-right">Amallar</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredRoles.map((role) => (
-                    <tr key={role.id} className="transition duration-150 hover:bg-slate-50/30">
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="size-3.5 rounded-full ring-2 ring-white shadow-sm shrink-0" style={{ backgroundColor: role.color }} />
-                          <span className="font-extrabold text-slate-800 text-sm">{role.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 text-xs font-semibold text-slate-500 max-w-sm truncate">
-                        {role.description}
-                      </td>
-                      <td className="px-5 py-4 text-center">
-                        <Badge variant="violet" className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-lg">
-                          {role.users} user
-                        </Badge>
-                      </td>
-                      <td className="px-5 py-4 text-center text-xs font-bold text-slate-600">
-                        {role.moduleAccess.includes("all") ? modules.length : role.moduleAccess.length} ta modul
-                      </td>
-                      <td className="px-5 py-4 text-center text-xs font-bold text-slate-600">
-                        {role.permissions.length} ta huquq
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <div className="flex justify-end gap-1.5">
-                          <Button
-                            variant="secondary"
-                            onClick={() => handleOpenEditModal(role)}
-                            className="h-8 rounded-lg px-2.5 text-[10px] font-bold uppercase border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 flex items-center gap-1"
-                          >
-                            <Edit2 className="size-3" />
-                            Tahrirlash
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => handleDeleteRole(role.id)}
-                            className="h-8 rounded-lg px-2.5 text-[10px] font-bold uppercase border border-rose-100 bg-white text-rose-600 hover:bg-rose-50 flex items-center gap-1"
-                          >
-                            <Trash2 className="size-3" />
-                            O'chirish
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_360px]">
+        <div className="grid gap-4 lg:grid-cols-2">
+          {filteredRoles.map((role) => (
+            <Card key={role.id} className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-soft">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <span className="grid size-12 shrink-0 place-items-center rounded-2xl text-white shadow-sm" style={{ backgroundColor: role.color }}>
+                      <ShieldCheck className="size-6" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-base font-black text-slate-950">{role.name}</h3>
+                      <p className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-slate-500">{role.description}</p>
+                    </div>
+                  </div>
+                  <Button variant="secondary" size="sm" className="h-9 rounded-xl border border-slate-200 bg-white px-2 text-slate-500">
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </div>
+
+                <div className="mt-5 grid grid-cols-3 gap-2">
+                  <RoleMiniStat label="User" value={String(role.users)} />
+                  <RoleMiniStat label="Modul" value={String(role.moduleAccess.includes("all") ? modules.length : role.moduleAccess.length)} />
+                  <RoleMiniStat label="Huquq" value={String(role.permissions.length)} />
+                </div>
+
+                <div className="mt-4">
+                  <div className="mb-2 flex items-center justify-between text-[11px] font-black text-slate-500">
+                    <span>Ruxsat qamrovi</span>
+                    <span>{Math.round((role.permissions.length / Math.max(1, permissions.length)) * 100)}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.round((role.permissions.length / Math.max(1, permissions.length)) * 100)}%`,
+                        backgroundColor: role.color,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => handleOpenEditModal(role)}
+                    className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 hover:bg-slate-50"
+                  >
+                    <Edit2 className="size-4" />
+                    Tahrirlash
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => handleDeleteRole(role.id)}
+                    className="h-9 rounded-xl border border-rose-100 bg-rose-50 px-3 text-xs font-black text-rose-600 hover:bg-rose-100"
+                  >
+                    <Trash2 className="size-4" />
+                    O'chirish
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <Card className="h-fit overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-soft">
+          <CardHeader>
+            <div>
+              <CardTitle className="text-base font-black">Ruxsat xaritasi</CardTitle>
+              <CardDescription className="text-xs font-semibold">Modul va harakatlar bo'yicha umumiy nazorat.</CardDescription>
             </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {Object.entries(
+              permissions.reduce<Record<string, number>>((acc, permission) => {
+                acc[permission.group] = (acc[permission.group] ?? 0) + 1;
+                return acc;
+              }, {}),
+            ).map(([group, count]) => (
+              <div key={group} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-3">
+                <div className="flex items-center gap-3">
+                  <span className="grid size-9 place-items-center rounded-xl bg-blue-50 text-blue-600">
+                    <LayoutGrid className="size-4" />
+                  </span>
+                  <span className="text-xs font-black text-slate-700">{group}</span>
+                </div>
+                <Badge className="bg-white text-slate-600">{count} huquq</Badge>
+              </div>
+            ))}
           </CardContent>
         </Card>
       </div>
@@ -503,6 +584,15 @@ function CustomCheckbox({ checked, onChange }: { checked: boolean; onChange?: ()
     >
       <Check className="size-3.5 stroke-[3.5]" />
     </span>
+  );
+}
+
+function RoleMiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
+      <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-1 text-lg font-black text-slate-950">{value}</p>
+    </div>
   );
 }
 

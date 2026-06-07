@@ -1,6 +1,16 @@
+import { cookies } from "next/headers";
+import { LOCAL_ADMIN_SESSION_COOKIE, verifyLocalAdminSession } from "@/lib/admin-local-session";
 import { createClient } from "@/lib/supabase/server";
 
+async function hasLocalAdminSession() {
+  const cookieStore = await cookies();
+  return verifyLocalAdminSession(cookieStore.get(LOCAL_ADMIN_SESSION_COOKIE)?.value);
+}
+
 export async function getSessionUser() {
+  if (await hasLocalAdminSession()) {
+    return null;
+  }
   const supabase = await createClient();
   if (!supabase) return null;
   const {
@@ -10,6 +20,9 @@ export async function getSessionUser() {
 }
 
 export async function getCurrentRole() {
+  if (await hasLocalAdminSession()) {
+    return "admin";
+  }
   const supabase = await createClient();
   if (!supabase) return "admin";
   const {

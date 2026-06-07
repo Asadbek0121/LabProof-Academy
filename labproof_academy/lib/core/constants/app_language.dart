@@ -88,7 +88,8 @@ const _studentTexts = {
     'create_account': 'Ro‘yxatdan o‘tish',
     'sign_in_desc': 'Akkauntingizga kirish',
     'create_account_desc': 'Professional o‘rganishni boshlang',
-    'telegram_onboarding_note': 'Ro‘yxatdan o‘tish jarayonida Telegram orqali akkauntingiz tasdiqlanadi.',
+    'telegram_onboarding_note':
+        'Ro‘yxatdan o‘tish jarayonida Telegram orqali akkauntingiz tasdiqlanadi.',
     'topic_not_found': 'Mavzu topilmadi',
     'no_active_topic_in_module': 'Bu modulda hali ochiq mavzu yo‘q.',
     'back_to_module': 'Modulga qaytish',
@@ -96,11 +97,13 @@ const _studentTexts = {
     'no_modules_assigned': 'Hali sizga modul biriktirilmagan.',
     'refresh': 'Yangilash',
     'quiz_not_added': 'Test hali qo‘shilmagan',
-    'quiz_not_added_desc': 'Admin panel orqali bu mavzuga real savollar qo‘shilganda test ochiladi.',
+    'quiz_not_added_desc':
+        'Admin panel orqali bu mavzuga real savollar qo‘shilganda test ochiladi.',
     'back_to_topic': 'Mavzuga qaytish',
     'pdf_not_set': 'Bu mavzu uchun PDF fayl linki hali belgilanmagan.',
     'final_quiz_not_ready': 'Yakuniy imtihon hali tayyor emas',
-    'final_quiz_not_ready_desc': 'Modul savollari admin panelda qo‘shilgandan keyin yakuniy imtihon ochiladi.',
+    'final_quiz_not_ready_desc':
+        'Modul savollari admin panelda qo‘shilgandan keyin yakuniy imtihon ochiladi.',
     'register_hint': 'Ism familiya, telefon raqam va parol kiriting.',
     'full_name': 'Ism familiya',
     'admin_login_label': 'Login',
@@ -116,8 +119,10 @@ const _studentTexts = {
     'reset_password_hint':
         'Telefon raqamingizni kiriting, yangi parolni ikki marta yozing va Telegram orqali tasdiqlang.',
     'new_password': 'Yangi parol',
-    'register_subtitle': 'Kelajakdagi laboratoriya mutaxassislari safiga qo‘shiling.',
-    'login_subtitle': 'O‘quv safaringizni davom ettiring va natijangizni oshiring.',
+    'register_subtitle':
+        'Kelajakdagi laboratoriya mutaxassislari safiga qo‘shiling.',
+    'login_subtitle':
+        'O‘quv safaringizni davom ettiring va natijangizni oshiring.',
     'your_info': 'Ma’lumotlaringiz',
     'login_title': 'Hisobga kirish',
     'security': 'Xavfsizlik',
@@ -130,14 +135,18 @@ const _studentTexts = {
     'enter_password': 'Parolingizni kiriting',
     'reenter_password': 'Parolni qayta kiriting',
     'remember_me': 'Eslab qolish',
-    'telegram_verify_note': 'Hisobni tasdiqlash uchun Telegram bot orqali kod olasiz.',
+    'telegram_verify_note':
+        'Hisobni tasdiqlash uchun Telegram bot orqali kod olasiz.',
     'verification_code': 'Tasdiqlash kodi',
     '4_digit_code': '4 xonali kod',
     'get_telegram_code': 'Telegram kod olish',
     'have_account': 'Hisobingiz bormi?',
     'no_account': 'Hisobingiz yo‘qmi?',
-    'terms_agreement': 'Kirish orqali siz xizmat shartlari va maxfiylik siyosatiga rozilik bildirasiz.',
-    'keep_learning_growing': 'O‘rganishda davom eting,\nO‘sishda davom eting! 🚀',
+    'terms_agreement':
+        'Kirish orqali siz xizmat shartlari va maxfiylik siyosatiga rozilik bildirasiz.',
+    'keep_learning_growing':
+        'O‘rganishda davom eting,\nO‘sishda davom eting! 🚀',
+    'today_plan': 'Bugungi reja',
     'journey_starts': 'Sizning bilim yo\'lingiz shu yerdan boshlanadi.',
     'see_all': 'Barchasini ko‘rish >',
     'recent_activity': 'So‘nggi faollik',
@@ -152,16 +161,23 @@ const _studentTexts = {
     'my_progress': 'Mening natijam',
     'quizzes': 'Viktorinalar',
     'bookmarks': 'Xatcho‘plar',
-    'onboarding_slide1_title': 'Klinik laboratoriya\nSohasini <purple>o‘rganing</purple>',
-    'onboarding_slide1_subtitle': 'Gematologiya, mikrobiologiya, bioximiya va boshqalarni mutaxassislar kurslari orqali o‘zlashtiring.',
+    'onboarding_slide1_title':
+        'Klinik laboratoriya\nSohasini <purple>o‘rganing</purple>',
+    'onboarding_slide1_subtitle':
+        'Gematologiya, mikrobiologiya, bioximiya va boshqalarni mutaxassislar kurslari orqali o‘zlashtiring.',
     'onboarding_slide2_title': 'Interaktiv\n<purple>Tibbiy darslar</purple>',
-    'onboarding_slide2_subtitle': 'O‘rganishni samarali va maroqli qiluvchi qiziqarli video darslar, viktorinalar va manbalar.',
-    'onboarding_slide3_title': 'Sertifikat oling va\nNatijani <purple>kuzating</purple>',
-    'onboarding_slide3_subtitle': 'Sertifikatga ega bo‘ling, natijangizni kuzatib boring va o‘quv maqsadlaringizga erishing.',
+    'onboarding_slide2_subtitle':
+        'O‘rganishni samarali va maroqli qiluvchi qiziqarli video darslar, viktorinalar va manbalar.',
+    'onboarding_slide3_title':
+        'Sertifikat oling va\nNatijani <purple>kuzating</purple>',
+    'onboarding_slide3_subtitle':
+        'Sertifikatga ega bo‘ling, natijangizni kuzatib boring va o‘quv maqsadlaringizga erishing.',
     'onboarding_skip': 'O‘tkazib yuborish',
     'onboarding_get_started': 'Boshlash',
-    'onboarding_welcome': '<purple>LabProof</purple> Academy\'ga\nXush kelibsiz',
-    'onboarding_journey': 'Laboratoriya mutaxassisi bo‘lish yo‘lidagi sayohatingiz shu yerdan boshlanadi.',
+    'onboarding_welcome':
+        '<purple>LabProof</purple> Academy\'ga\nXush kelibsiz',
+    'onboarding_journey':
+        'Laboratoriya mutaxassisi bo‘lish yo‘lidagi sayohatingiz shu yerdan boshlanadi.',
     'onboarding_access_account': 'Hisobingizga kiring',
     'onboarding_start_journey': 'O‘quv sayohatingizni boshlang',
     'welcome_to': 'LabProof Academy ga xush kelibsiz',
@@ -317,7 +333,8 @@ const _studentTexts = {
     'send_text_or_attachment': 'Hech bo‘lmasa matn yoki biriktirma yuboring.',
     'stop': 'To‘xtatish',
     'video_not_set': 'Bu mavzu uchun video havola hali belgilanmagan.',
-    'video_external_hint': 'Video havola orqali ochiladi. YouTube havolasi bo‘lsa, video ilova ichida ko‘rsatiladi.',
+    'video_external_hint':
+        'Video havola orqali ochiladi. YouTube havolasi bo‘lsa, video ilova ichida ko‘rsatiladi.',
     'video_inapp_hint': 'YouTube video ilova ichida ko‘rsatilmoqda.',
   },
   AppLanguage.ru: {
@@ -327,7 +344,8 @@ const _studentTexts = {
     'create_account': 'Регистрация',
     'sign_in_desc': 'Войти в свой аккаунт',
     'create_account_desc': 'Начните профессиональное обучение',
-    'telegram_onboarding_note': 'В процессе регистрации ваш аккаунт будет подтвержден через Telegram.',
+    'telegram_onboarding_note':
+        'В процессе регистрации ваш аккаунт будет подтвержден через Telegram.',
     'topic_not_found': 'Тема не найдена',
     'no_active_topic_in_module': 'В этом модуле пока нет открытых тем.',
     'back_to_module': 'Вернуться в модуль',
@@ -335,11 +353,13 @@ const _studentTexts = {
     'no_modules_assigned': 'Вам еще не назначены модули.',
     'refresh': 'Обновить',
     'quiz_not_added': 'Тест еще не добавлен',
-    'quiz_not_added_desc': 'Тест откроется, когда через админ-панель будут добавлены реальные вопросы.',
+    'quiz_not_added_desc':
+        'Тест откроется, когда через админ-панель будут добавлены реальные вопросы.',
     'back_to_topic': 'Вернуться к теме',
     'pdf_not_set': 'PDF-ссылка для этой темы еще не установлена.',
     'final_quiz_not_ready': 'Итоговый экзамен еще не готов',
-    'final_quiz_not_ready_desc': 'Итоговый экзамен откроется после того, как вопросы модуля будут добавлены в админ-панели.',
+    'final_quiz_not_ready_desc':
+        'Итоговый экзамен откроется после того, как вопросы модуля будут добавлены в админ-панели.',
     'register_hint': 'Введите имя, телефон и пароль.',
     'full_name': 'Имя и фамилия',
     'admin_login_label': 'Логин',
@@ -369,14 +389,17 @@ const _studentTexts = {
     'enter_password': 'Введите пароль',
     'reenter_password': 'Введите пароль еще раз',
     'remember_me': 'Запомнить меня',
-    'telegram_verify_note': 'Для подтверждения аккаунта вы получите код через Telegram бота.',
+    'telegram_verify_note':
+        'Для подтверждения аккаунта вы получите код через Telegram бота.',
     'verification_code': 'Код подтверждения',
     '4_digit_code': '4-значный код',
     'get_telegram_code': 'Получить код Telegram',
     'have_account': 'Уже есть аккаунт?',
     'no_account': 'Нет аккаунта?',
-    'terms_agreement': 'Входя в систему, вы соглашаетесь с условиями обслуживания и политикой конфиденциальности.',
+    'terms_agreement':
+        'Входя в систему, вы соглашаетесь с условиями обслуживания и политикой конфиденциальности.',
     'keep_learning_growing': 'Продолжайте учиться,\nПродолжайте расти! 🚀',
+    'today_plan': 'План на сегодня',
     'journey_starts': 'Ваше путешествие начинается здесь.',
     'see_all': 'Посмотреть все >',
     'recent_activity': 'Недавняя активность',
@@ -391,16 +414,24 @@ const _studentTexts = {
     'my_progress': 'Мой прогресс',
     'quizzes': 'Тесты',
     'bookmarks': 'Закладки',
-    'onboarding_slide1_title': 'Изучайте клиническую\nЛабораторную <purple>науку</purple>',
-    'onboarding_slide1_subtitle': 'Освойте гематологию, микробиологию, биохимию и многое другое с курсами от экспертов.',
-    'onboarding_slide2_title': 'Интерактивные\n<purple>Медицинские уроки</purple>',
-    'onboarding_slide2_subtitle': 'Увлекательные видеоуроки, викторины и ресурсы для эффективного и приятного обучения.',
-    'onboarding_slide3_title': 'Получайте сертификаты\nИ следите за <purple>успехом</purple>',
-    'onboarding_slide3_subtitle': 'Сертифицируйтесь, отслеживайте прогресс и достигайте своих учебных целей шаг за шагом.',
+    'onboarding_slide1_title':
+        'Изучайте клиническую\nЛабораторную <purple>науку</purple>',
+    'onboarding_slide1_subtitle':
+        'Освойте гематологию, микробиологию, биохимию и многое другое с курсами от экспертов.',
+    'onboarding_slide2_title':
+        'Интерактивные\n<purple>Медицинские уроки</purple>',
+    'onboarding_slide2_subtitle':
+        'Увлекательные видеоуроки, викторины и ресурсы для эффективного и приятного обучения.',
+    'onboarding_slide3_title':
+        'Получайте сертификаты\nИ следите за <purple>успехом</purple>',
+    'onboarding_slide3_subtitle':
+        'Сертифицируйтесь, отслеживайте прогресс и достигайте своих учебных целей шаг за шагом.',
     'onboarding_skip': 'Пропустить',
     'onboarding_get_started': 'Начать',
-    'onboarding_welcome': 'Добро пожаловать в\n<purple>LabProof</purple> Academy',
-    'onboarding_journey': 'Ваш путь к тому, чтобы стать специалистом лаборатории, начинается здесь.',
+    'onboarding_welcome':
+        'Добро пожаловать в\n<purple>LabProof</purple> Academy',
+    'onboarding_journey':
+        'Ваш путь к тому, чтобы стать специалистом лаборатории, начинается здесь.',
     'onboarding_access_account': 'Войдите в аккаунт',
     'onboarding_start_journey': 'Начните свое обучение',
     'welcome_to': 'Добро пожаловать в LabProof Academy',
@@ -550,10 +581,12 @@ const _studentTexts = {
     'open_external_video': 'Открыть внешнее видео',
     'send_question': 'Отправить вопрос',
     'join': 'Присоединиться',
-    'send_text_or_attachment': 'Пожалуйста, отправьте хотя бы текст или вложение.',
+    'send_text_or_attachment':
+        'Пожалуйста, отправьте хотя бы текст или вложение.',
     'stop': 'Остановить',
     'video_not_set': 'Видео ссылка для этой темы еще не установлена.',
-    'video_external_hint': 'Видео откроется по ссылке. Если есть ссылка на YouTube, видео будет показано внутри приложения.',
+    'video_external_hint':
+        'Видео откроется по ссылке. Если есть ссылка на YouTube, видео будет показано внутри приложения.',
     'video_inapp_hint': 'Видео YouTube воспроизводится внутри приложения.',
   },
   AppLanguage.uzCyrillic: {
@@ -562,7 +595,8 @@ const _studentTexts = {
     'create_account': 'Рўйхатдан ўтиш',
     'sign_in_desc': 'Аккаунтингизга кириш',
     'create_account_desc': 'Профессионал ўрганишни бошланг',
-    'telegram_onboarding_note': 'Рўйхатдан ўтиш жараёнида Telegram орқали аккаунтингиз тасдиқланади.',
+    'telegram_onboarding_note':
+        'Рўйхатдан ўтиш жараёнида Telegram орқали аккаунтингиз тасдиқланади.',
     'topic_not_found': 'Мавзу топилмади',
     'no_active_topic_in_module': 'Бу модулда ҳали очиқ мавзу йўқ.',
     'back_to_module': 'Модулга қайтиш',
@@ -570,11 +604,13 @@ const _studentTexts = {
     'no_modules_assigned': 'Ҳали сизга модул бириктирилмаган.',
     'refresh': 'Янгилаш',
     'quiz_not_added': 'Тест ҳали қўшилмаган',
-    'quiz_not_added_desc': 'Админ панель орқали бу мавзуга реал саволлар қўшилганда тест очилади.',
+    'quiz_not_added_desc':
+        'Админ панель орқали бу мавзуга реал саволлар қўшилганда тест очилади.',
     'back_to_topic': 'Мавзуга қайтиш',
     'pdf_not_set': 'Бу мавзу учун PDF файл линки ҳали белгиланмаган.',
     'final_quiz_not_ready': 'Якуний имтиҳон ҳали тайёр эмас',
-    'final_quiz_not_ready_desc': 'Модул саволлари админ панелда қўшилгандан кейин якуний имтиҳон очилади.',
+    'final_quiz_not_ready_desc':
+        'Модул саволлари админ панелда қўшилгандан кейин якуний имтиҳон очилади.',
     'register_hint': 'Исм фамилия, телефон рақам ва парол киритинг.',
     'full_name': 'Исм фамилия',
     'admin_login_label': 'Логин',
@@ -590,8 +626,10 @@ const _studentTexts = {
     'reset_password_hint':
         'Телефон рақамингизни киритинг, янги паролни икки марта ёзинг ва Telegram орқали тасдиқланг.',
     'new_password': 'Янги парол',
-    'register_subtitle': 'Келажакдаги лаборатория мутахассислари сафига қўшилинг.',
-    'login_subtitle': 'Ўқув сафарингизни давом эттиринг ва натижангизни оширинг.',
+    'register_subtitle':
+        'Келажакдаги лаборатория мутахассислари сафига қўшилинг.',
+    'login_subtitle':
+        'Ўқув сафарингизни давом эттиринг ва натижангизни оширинг.',
     'your_info': 'Маълумотларингиз',
     'login_title': 'Ҳисобга кириш',
     'security': 'Хавфсизлик',
@@ -604,14 +642,17 @@ const _studentTexts = {
     'enter_password': 'Паролингизни киритинг',
     'reenter_password': 'Паролни қайта киритинг',
     'remember_me': 'Эслаб қолиш',
-    'telegram_verify_note': 'Ҳисобни тасдиқлаш учун Telegram бот орқали код оласиз.',
+    'telegram_verify_note':
+        'Ҳисобни тасдиқлаш учун Telegram бот орқали код оласиз.',
     'verification_code': 'Тасдиқлаш коди',
     '4_digit_code': '4 хонали код',
     'get_telegram_code': 'Telegram код олиш',
     'have_account': 'Ҳисобингиз борми?',
     'no_account': 'Ҳисобингиз йўқми?',
-    'terms_agreement': 'Кириш орқали сиз хизмат шартлари ва махфийлик сиёсатига розилик билдирасиз.',
+    'terms_agreement':
+        'Кириш орқали сиз хизмат шартлари ва махфийлик сиёсатига розилик билдирасиз.',
     'keep_learning_growing': 'Ўрганишда давом этинг,\nЎсишда давом этинг! 🚀',
+    'today_plan': 'Бугунги режа',
     'journey_starts': 'Сизнинг билим йўлингиз шу ердан бошланади.',
     'see_all': 'Барчасини кўриш >',
     'recent_activity': 'Сўнгги faollik',
@@ -626,16 +667,22 @@ const _studentTexts = {
     'my_progress': 'Менинг натижам',
     'quizzes': 'Викториналар',
     'bookmarks': 'Хатчўплар',
-    'onboarding_slide1_title': 'Клиник лаборатория\nСоҳасини <purple>ўрганинг</purple>',
-    'onboarding_slide1_subtitle': 'Гематология, микробиология, биохимия ва бошқаларни мутахассислар курслари орқали ўзлаштиринг.',
+    'onboarding_slide1_title':
+        'Клиник лаборатория\nСоҳасини <purple>ўрганинг</purple>',
+    'onboarding_slide1_subtitle':
+        'Гематология, микробиология, биохимия ва бошқаларни мутахассислар курслари орқали ўзлаштиринг.',
     'onboarding_slide2_title': 'Интерактив\n<purple>Тиббий дарслар</purple>',
-    'onboarding_slide2_subtitle': 'Ўрганишни самарали ва мароқли қилувчи қизиқарли видео дарслар, викториналар ва манбалар.',
-    'onboarding_slide3_title': 'Сертификат олинг ва\nНатижани <purple>кузатинг</purple>',
-    'onboarding_slide3_subtitle': 'Сертификатга эга бўлинг, натижангизни кузатиб боринг ва ўқув мақсадларингизга эришинг.',
+    'onboarding_slide2_subtitle':
+        'Ўрганишни самарали ва мароқли қилувчи қизиқарли видео дарслар, викториналар ва манбалар.',
+    'onboarding_slide3_title':
+        'Сертификат олинг ва\nНатижани <purple>кузатинг</purple>',
+    'onboarding_slide3_subtitle':
+        'Сертификатга эга бўлинг, натижангизни кузатиб боринг ва ўқув мақсадларингизга эришинг.',
     'onboarding_skip': 'Ўтказиб юбориш',
     'onboarding_get_started': 'Бошлаш',
     'onboarding_welcome': '<purple>LabProof</purple> Academy\'ga\nХуш келибсиз',
-    'onboarding_journey': 'Лаборатория мутахассиси бўлиш йўлидаги саёҳатингиз шу ердан бошланади.',
+    'onboarding_journey':
+        'Лаборатория мутахассиси бўлиш йўлидаги саёҳатингиз шу ердан бошланади.',
     'onboarding_access_account': 'Ҳисобингизга киринг',
     'onboarding_start_journey': 'Ўқув саёҳатингизни бошланг',
     'welcome_to': 'LabProof Academy га хуш келибсиз',
@@ -790,7 +837,8 @@ const _studentTexts = {
     'send_text_or_attachment': 'Ҳеч бўлмаса матн ёки бириктирма юборинг.',
     'stop': 'Тўхтатиш',
     'video_not_set': 'Бу мавзу учун видео ҳавола ҳали белгиланмаган.',
-    'video_external_hint': 'Видео ҳавола орқали очилади. YouTube ҳаволаси бўлса, video ilova ichida кўрсатилади.',
+    'video_external_hint':
+        'Видео ҳавола орқали очилади. YouTube ҳаволаси бўлса, video ilova ichida кўрсатилади.',
     'video_inapp_hint': 'YouTube видео илова ichida кўрсатилмоқда.',
   },
 };

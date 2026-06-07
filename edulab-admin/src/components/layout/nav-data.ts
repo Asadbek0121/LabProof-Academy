@@ -22,13 +22,13 @@ import {
 
 export const navigation = [
   {
-    label: "DASHBOARD",
+    label: "ASOSIY",
     items: [
       { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     ],
   },
   {
-    label: "LEARNING",
+    label: "O'QUV",
     items: [
       { title: "Kategoriyalar", href: "/categories", icon: Tags },
       { title: "Modullar", href: "/modules", icon: LayoutGrid },
@@ -40,7 +40,7 @@ export const navigation = [
     ],
   },
   {
-    label: "MANAGEMENT",
+    label: "BOSHQARUV",
     items: [
       { title: "Talabalar", href: "/students", icon: Users },
       { title: "Progress monitoring", href: "/progress-monitoring", icon: CheckSquare },
@@ -53,7 +53,7 @@ export const navigation = [
     ],
   },
   {
-    label: "SYSTEM",
+    label: "TIZIM",
     items: [
       { title: "Administratorlar", href: "/administrators", icon: ShieldCheck },
       { title: "Sozlamalar", href: "/settings", icon: Settings },
@@ -62,4 +62,3 @@ export const navigation = [
     ],
   },
 ];
-

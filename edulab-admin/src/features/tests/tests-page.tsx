@@ -21,6 +21,11 @@ import {
   Timer,
   CheckSquare,
   ChevronRight,
+  Clipboard,
+  ImageIcon,
+  Link2,
+  UploadCloud,
+  Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,6 +42,22 @@ import {
   useDeleteQuestion,
 } from "@/hooks/use-admin-data";
 import { toast } from "sonner";
+
+const BULK_QUESTION_TEMPLATE = `Savol: Qon guruhlarini aniqlashda qaysi reagent ishlatiladi?
+A) Natriy xlorid
+B) Anti-A va Anti-B zardoblari
+C) Distillangan suv
+D) Glyukoza eritmasi
+Javob: B
+Izoh: Qon guruhi anti-A va anti-B reagentlar bilan agglutinatsiya reaksiyasi orqali aniqlanadi.
+
+Savol: Gemoglobin miqdori qaysi birlikda ifodalanadi?
+A) mmol/L
+B) g/L
+C) %
+D) mg/dL
+Javob: B
+Izoh: Klinik laboratoriyada gemoglobin odatda g/L birligida ko'rsatiladi.`;
 
 function PremiumBadge({
   variant,
@@ -132,6 +153,7 @@ export function TestsPage() {
     "text",
   );
   const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaUploading, setMediaUploading] = useState(false);
   const [explanation, setExplanation] = useState("");
   const [bulkText, setBulkText] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
@@ -310,17 +332,23 @@ export function TestsPage() {
           if (!line) return "";
           return line
             .replace(
-              /^[a-d]\)|^[a-d][\.:\-]|^answer\s*[:\-]|^javob\s*[:\-]/i,
+              /^[a-d]\)|^[a-d][\.:\-]|^answer\s*[:\-]|^javob\s*[:\-]|^izoh\s*[:\-]|^tushuntirish\s*[:\-]/i,
               "",
             )
             .trim();
         };
-        const question =
+        const questionLine =
+          lines.find((line) => /^savol\s*[:\-]/i.test(line)) ||
           lines.find(
             (line) =>
               !/^[a-d][\)\.:\-]/i.test(line) &&
-              !/^(answer|javob)\s*[:\-]/i.test(line),
-          ) || "";
+              !/^(answer|javob|izoh|tushuntirish)\s*[:\-]/i.test(line),
+          ) ||
+          "";
+        const question = questionLine
+          .replace(/^savol\s*[:\-]/i, "")
+          .replace(/^\d+[\)\.:\-]\s*/, "")
+          .trim();
         const answerRaw = getValue(["answer", "javob"]).toLowerCase();
         const answer = (
           ["a", "b", "c", "d"].includes(answerRaw[0]) ? answerRaw[0] : "a"
@@ -332,6 +360,8 @@ export function TestsPage() {
           option_c: getValue(["c)", "c.", "c:", "c-"]),
           option_d: getValue(["d)", "d.", "d:", "d-"]) || null,
           correct_option: answer,
+          explanation:
+            getValue(["izoh", "tushuntirish", "explanation"]) || null,
         };
       })
       .filter(
@@ -362,7 +392,7 @@ export function TestsPage() {
           question_type: "text",
           media_kind: null,
           media_url: null,
-          explanation: null,
+          explanation: item.explanation,
         });
       }
       setBulkText("");
@@ -405,6 +435,52 @@ export function TestsPage() {
     setMediaUrl(q.media_url || "");
     setExplanation(q.explanation || "");
     setIsAddingQuestion(true);
+  };
+
+  const handleQuestionMediaUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    const isImageQuestion = questionType === "image";
+    const isVideoQuestion = questionType === "video";
+    if (isImageQuestion && !file.type.startsWith("image/")) {
+      toast.error("Rasmli test uchun rasm faylini tanlang");
+      return;
+    }
+    if (isVideoQuestion && !file.type.startsWith("video/")) {
+      toast.error("Video test uchun video faylini tanlang");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("kind", isImageQuestion ? "image" : "video");
+
+    setMediaUploading(true);
+    try {
+      const response = await fetch("/api/media/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || "Fayl yuklashda xatolik yuz berdi");
+      }
+      setMediaUrl(result.media.secure_url);
+      toast.success(`${isImageQuestion ? "Rasm" : "Video"} yuklandi`);
+    } catch (err: any) {
+      toast.error(err.message || "Fayl yuklashda xatolik yuz berdi");
+    } finally {
+      setMediaUploading(false);
+    }
+  };
+
+  const copyBulkTemplate = async () => {
+    await navigator.clipboard.writeText(BULK_QUESTION_TEMPLATE);
+    toast.success("Matnli test shabloni clipboardga nusxalandi");
   };
 
   // Step transitions
@@ -545,7 +621,7 @@ export function TestsPage() {
         <Button
           onClick={() => openCreateModal()}
           disabled={!filterModuleId}
-          className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-full px-6 h-11 transition-all hover:scale-105 active:scale-95"
+          className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-lg px-5 h-11 transition-all "
         >
           <Plus className="size-5" />
           Yangi Test
@@ -553,18 +629,18 @@ export function TestsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6 mb-8">
-        <div className="md:col-span-4 lg:col-span-4 bg-white/80 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-5 flex flex-col justify-center gap-4">
+        <div className="md:col-span-4 lg:col-span-4 bg-white border border-slate-200 shadow-sm rounded-lg p-5 flex flex-col justify-center gap-4">
           <div className="space-y-2">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
               Modulni tanlang
             </p>
             {isModulesLoading ? (
-              <Skeleton className="h-11 w-full rounded-xl" />
+              <Skeleton className="h-11 w-full rounded-lg" />
             ) : (
               <Select
                 value={filterModuleId}
                 onChange={(e) => setFilterModuleId(e.target.value)}
-                className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-xl font-bold text-slate-700"
+                className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-lg font-bold text-slate-700"
               >
                 <option value="">Barcha Modullar</option>
                 {modules?.map((m: any) => (
@@ -580,13 +656,13 @@ export function TestsPage() {
               Mavzuni tanlang
             </p>
             {isTopicsLoading ? (
-              <Skeleton className="h-11 w-full rounded-xl" />
+              <Skeleton className="h-11 w-full rounded-lg" />
             ) : (
               <Select
                 value={filterTopicId}
                 onChange={(e) => setFilterTopicId(e.target.value)}
                 disabled={!filterModuleId}
-                className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-xl font-bold text-slate-700 disabled:opacity-50"
+                className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-lg font-bold text-slate-700 disabled:opacity-50"
               >
                 <option value="">Barcha Mavzular</option>
                 {topics?.map((t: any) => (
@@ -600,7 +676,7 @@ export function TestsPage() {
         </div>
 
         <div className="md:col-span-8 lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mb-2">
               <FileText className="size-5" />
             </div>
@@ -609,7 +685,7 @@ export function TestsPage() {
               Jami Testlar
             </p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2">
               <CheckSquare className="size-5" />
             </div>
@@ -620,7 +696,7 @@ export function TestsPage() {
               Quiz Testlar
             </p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-orange-50 text-orange-600 flex items-center justify-center mb-2">
               <BookOpen className="size-5" />
             </div>
@@ -631,7 +707,7 @@ export function TestsPage() {
               Savollar
             </p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center mb-2">
               <Users className="size-5" />
             </div>
@@ -645,12 +721,12 @@ export function TestsPage() {
         </div>
       </div>
 
-      <div className="bg-white/80 backdrop-blur-xl border border-white shadow-sm rounded-2xl p-3 flex flex-wrap items-center gap-3 mb-8">
+      <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-3 flex flex-wrap items-center gap-3 mb-8">
         <div className="relative flex-1 min-w-[250px]">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-slate-400" />
           <Input
             placeholder="Testlarni izlash..."
-            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 rounded-xl transition-all"
+            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 rounded-lg transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -659,7 +735,7 @@ export function TestsPage() {
         <Select
           value={filterTestType}
           onChange={(e: any) => setFilterTestType(e.target.value)}
-          className="h-12 w-full md:w-[180px] bg-slate-50/50 border-transparent rounded-xl font-medium text-slate-700"
+          className="h-12 w-full md:w-[180px] bg-slate-50/50 border-transparent rounded-lg font-medium text-slate-700"
         >
           <option value="all">Barcha Turlar</option>
           <option value="quiz">Faqat Quiz</option>
@@ -669,15 +745,15 @@ export function TestsPage() {
 
       {/* Premium Table View */}
       {isQuestionsLoading || isTopicsLoading ? (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 flex flex-col gap-4">
             {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-16 w-full rounded-2xl" />
+              <Skeleton key={i} className="h-16 w-full rounded-lg" />
             ))}
           </div>
         </Card>
       ) : !filterModuleId ? (
-        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white/50 backdrop-blur-sm rounded-3xl border border-white border-dashed">
+        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white rounded-lg border border-dashed border-slate-200">
           <div className="size-24 bg-blue-50 rounded-full flex items-center justify-center mb-6">
             <BookOpen className="size-10 text-blue-500" />
           </div>
@@ -690,7 +766,7 @@ export function TestsPage() {
           </p>
         </div>
       ) : !testsList.length ? (
-        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white/50 backdrop-blur-sm rounded-3xl border border-white border-dashed">
+        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white rounded-lg border border-dashed border-slate-200">
           <div className="size-24 bg-blue-50 rounded-full flex items-center justify-center mb-6">
             <FileText className="size-10 text-blue-500" />
           </div>
@@ -702,13 +778,13 @@ export function TestsPage() {
           </p>
           <Button
             onClick={() => openCreateModal()}
-            className="rounded-full px-8 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide"
+            className="rounded-lg px-6 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide"
           >
             <Plus className="size-5 mr-2" /> Yangi Test Qo'shish
           </Button>
         </div>
       ) : (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden bg-white/80 backdrop-blur-xl animate-in fade-in-50 duration-200">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden bg-white animate-in fade-in-50 duration-200">
           <div className="overflow-x-auto edulab-scrollbar">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-[10px] font-black uppercase text-slate-400 tracking-wider border-b border-slate-100">
@@ -737,7 +813,7 @@ export function TestsPage() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-4">
-                        <div className="relative size-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 shadow-sm border border-slate-100 group-hover:shadow-md transition-all">
+                        <div className="relative size-12 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 shadow-sm border border-slate-100 group-hover:shadow-md transition-all">
                           <CheckSquare className="size-5 group-hover:scale-110 transition-transform" />
                         </div>
                         <div className="min-w-0">
@@ -792,7 +868,7 @@ export function TestsPage() {
                           onClick={() => openEditModal(test)}
                           variant="ghost"
                           size="icon"
-                          className="size-9 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                          className="size-9 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"
                         >
                           <Pencil className="size-4.5" />
                         </Button>
@@ -1028,7 +1104,7 @@ export function TestsPage() {
 
               {/* Add / Edit Question Subform */}
               {isAddingQuestion ? (
-                <Card className="border border-blue-200 bg-blue-50/10 rounded-2xl p-4.5 space-y-3.5">
+                <Card className="border border-blue-200 bg-blue-50/10 rounded-lg p-4.5 space-y-3.5">
                   <div className="flex justify-between items-center">
                     <h4 className="text-xs font-black text-blue-700 uppercase tracking-wide">
                       {editingQuestionItem
@@ -1064,44 +1140,114 @@ export function TestsPage() {
                     <button
                       type="button"
                       onClick={() => setQuestionType("text")}
-                      className={`rounded-xl border px-3 py-2 text-left text-xs font-black ${questionType === "text" ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 bg-white text-slate-600"}`}
+                      className={`rounded-xl border px-3 py-3 text-left text-xs font-black transition ${questionType === "text" ? "border-blue-500 bg-blue-50 text-blue-700 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50/40"}`}
                     >
-                      Matnli test
+                      <span className="mb-1 flex items-center gap-2">
+                        <FileText className="size-4" />
+                        Matnli test
+                      </span>
+                      <span className="block text-[10px] font-semibold text-slate-400">
+                        Oddiy savol va javoblar
+                      </span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setQuestionType("image")}
-                      className={`rounded-xl border px-3 py-2 text-left text-xs font-black ${questionType === "image" ? "border-fuchsia-500 bg-fuchsia-50 text-fuchsia-700" : "border-slate-200 bg-white text-slate-600"}`}
+                      className={`rounded-xl border px-3 py-3 text-left text-xs font-black transition ${questionType === "image" ? "border-fuchsia-500 bg-fuchsia-50 text-fuchsia-700 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-fuchsia-200 hover:bg-fuchsia-50/40"}`}
                     >
-                      Rasmli test
+                      <span className="mb-1 flex items-center gap-2">
+                        <ImageIcon className="size-4" />
+                        Rasmli test
+                      </span>
+                      <span className="block text-[10px] font-semibold text-slate-400">
+                        URL yoki PC fayl
+                      </span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setQuestionType("video")}
-                      className={`rounded-xl border px-3 py-2 text-left text-xs font-black ${questionType === "video" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-600"}`}
+                      className={`rounded-xl border px-3 py-3 text-left text-xs font-black transition ${questionType === "video" ? "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:bg-emerald-50/40"}`}
                     >
-                      Video test
+                      <span className="mb-1 flex items-center gap-2">
+                        <Video className="size-4" />
+                        Video test
+                      </span>
+                      <span className="block text-[10px] font-semibold text-slate-400">
+                        Havola yoki upload
+                      </span>
                     </button>
                   </div>
 
                   {questionType !== "text" && (
-                    <div className="grid gap-1">
-                      <label className="text-[11px] font-bold text-slate-600">
-                        {questionType === "image"
-                          ? "Rasm URL"
-                          : "Video/YouTube URL"}{" "}
-                        *
-                      </label>
-                      <Input
-                        placeholder={
-                          questionType === "image"
-                            ? "https://.../image.png"
-                            : "https://youtube.com/watch?v=..."
-                        }
-                        value={mediaUrl}
-                        onChange={(e) => setMediaUrl(e.target.value)}
-                        className="h-9 text-xs"
-                      />
+                    <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] font-black uppercase tracking-wide text-slate-800">
+                            {questionType === "image"
+                              ? "Rasm manbasi"
+                              : "Video manbasi"}
+                          </p>
+                          <p className="text-[10px] font-semibold text-slate-400">
+                            Havola kiriting yoki kompyuterdan fayl yuklang.
+                          </p>
+                        </div>
+                        {mediaUrl && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => window.open(mediaUrl, "_blank")}
+                            className="h-8 rounded-lg px-3 text-[10px] font-black"
+                          >
+                            <Link2 className="mr-1.5 size-3.5" />
+                            Ko'rish
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-[1fr_180px]">
+                        <div className="grid gap-1">
+                          <label className="text-[11px] font-bold text-slate-600">
+                            {questionType === "image"
+                              ? "Rasm URL"
+                              : "Video/YouTube URL"}{" "}
+                            *
+                          </label>
+                          <Input
+                            placeholder={
+                              questionType === "image"
+                                ? "https://.../image.png"
+                                : "https://youtube.com/watch?v=..."
+                            }
+                            value={mediaUrl}
+                            onChange={(e) => setMediaUrl(e.target.value)}
+                            className="h-9 text-xs"
+                          />
+                        </div>
+
+                        <label className="mt-5 flex h-9 cursor-pointer items-center justify-center rounded-lg border border-dashed border-blue-300 bg-blue-50 px-3 text-[11px] font-black text-blue-700 transition hover:bg-blue-100">
+                          {mediaUploading ? (
+                            <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                          ) : (
+                            <UploadCloud className="mr-1.5 size-3.5" />
+                          )}
+                          PC'dan yuklash
+                          <input
+                            type="file"
+                            className="sr-only"
+                            accept={
+                              questionType === "image" ? "image/*" : "video/*"
+                            }
+                            onChange={handleQuestionMediaUpload}
+                            disabled={mediaUploading}
+                          />
+                        </label>
+                      </div>
+
+                      {mediaUrl && (
+                        <p className="mt-2 truncate rounded-lg bg-slate-50 px-3 py-2 text-[10px] font-semibold text-slate-500">
+                          {mediaUrl}
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1220,11 +1366,13 @@ export function TestsPage() {
                       onClick={handleSaveQuestion}
                       className="font-bold h-8.5 text-xs px-4"
                       disabled={
+                        mediaUploading ||
                         createQuestionMutation.isPending ||
                         updateQuestionMutation.isPending
                       }
                     >
-                      {(createQuestionMutation.isPending ||
+                      {(mediaUploading ||
+                        createQuestionMutation.isPending ||
                         updateQuestionMutation.isPending) && (
                         <Loader2 className="mr-1 size-3.5 animate-spin" />
                       )}
@@ -1236,7 +1384,7 @@ export function TestsPage() {
                 <button
                   type="button"
                   onClick={() => setIsAddingQuestion(true)}
-                  className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 rounded-2xl py-6 hover:bg-slate-50 hover:border-slate-300 transition cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 rounded-lg py-6 hover:bg-slate-50 hover:border-slate-300 transition cursor-pointer"
                 >
                   <Plus className="size-5 text-slate-400" />
                   <span className="text-sm font-extrabold text-slate-600">
@@ -1248,7 +1396,7 @@ export function TestsPage() {
               {/* Scrollable list of existing questions */}
               <div className="max-h-[300px] overflow-y-auto pr-1 space-y-2 edulab-scrollbar">
                 {isQuestionsLoading ? (
-                  <Skeleton className="h-20 w-full rounded-2xl" />
+                  <Skeleton className="h-20 w-full rounded-lg" />
                 ) : !wizardQuestions.length ? (
                   <p className="text-center text-xs text-slate-400 font-semibold py-8">
                     Ushbu testga hali savollar kiritilmagan.
@@ -1257,7 +1405,7 @@ export function TestsPage() {
                   wizardQuestions.map((q: any, index: number) => (
                     <div
                       key={q.id}
-                      className="p-3 border border-border bg-white rounded-xl flex gap-3 items-start justify-between"
+                      className="p-3 border border-border bg-white rounded-lg flex gap-3 items-start justify-between"
                     >
                       <div className="min-w-0 flex-1 text-xs">
                         <div className="flex gap-2 items-center">
@@ -1358,29 +1506,91 @@ export function TestsPage() {
             </div>
 
             {/* Sidebar info */}
-            <div className="border border-border rounded-2xl p-5 bg-slate-50/50 space-y-4">
-              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
-                Jarayon qoidalari
-              </h4>
-              <ul className="text-xs font-semibold text-slate-500 space-y-2">
-                <li className="flex gap-2">
-                  <span className="text-emerald-500 shrink-0">✓</span>
-                  Barcha kiritilgan savollar Supabase ma'lumotlar bazasida
-                  saqlanadi.
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-emerald-500 shrink-0">✓</span>
-                  Savollarga oson, o'rtacha yoki qiyin daraja hamda ball bering.
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-emerald-500 shrink-0">✓</span>
-                  Test boshlanishida savollar va variantlar aralashtirilib
-                  beriladi (Sozlamalar bo'limida boshqariladi).
-                </li>
-              </ul>
+            <div className="space-y-4">
+              <div className="rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/40 p-5 transition-all hover:bg-blue-50/80">
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <h4 className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-blue-800">
+                      <Clipboard className="size-5 text-blue-600" />
+                      Ommaviy import (Copy & Paste)
+                    </h4>
+                    <p className="mt-2 text-xs font-semibold leading-relaxed text-blue-700/80">
+                      Word, Telegram yoki PDF'dan olingan savollarni shablon formatida paste qiling. Bu orqali 50 tagacha savolni bir vaqtda qo'shishingiz mumkin.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setBulkText(BULK_QUESTION_TEMPLATE)}
+                    className="h-9 rounded-lg border border-blue-200 bg-white px-4 text-[11px] font-black text-blue-700 shadow-sm hover:bg-blue-50"
+                  >
+                    Shablonni qo'yish
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={copyBulkTemplate}
+                    className="h-9 rounded-lg border border-blue-200 bg-white px-4 text-[11px] font-black text-blue-700 shadow-sm hover:bg-blue-50"
+                  >
+                    Nusxalash
+                  </Button>
+                </div>
+
+                <div className="relative">
+                  <Textarea
+                    value={bulkText}
+                    onChange={(e) => setBulkText(e.target.value)}
+                    placeholder={BULK_QUESTION_TEMPLATE}
+                    className="h-64 resize-y border-blue-200 bg-white/90 p-4 font-mono text-[12px] leading-relaxed shadow-inner placeholder:text-slate-300 focus-visible:ring-blue-500"
+                  />
+                  {bulkText.length > 0 && (
+                    <div className="absolute right-3 top-3 rounded bg-blue-100 px-2 py-1 text-[9px] font-black text-blue-700">
+                      {bulkText.split(/\n\s*\n/g).filter(b => b.trim().length > 10).length} SAVOL
+                    </div>
+                  )}
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={handleBulkImport}
+                  disabled={bulkImporting || createQuestionMutation.isPending || !bulkText.trim()}
+                  className="mt-4 h-11 w-full rounded-lg bg-blue-600 text-sm font-black text-white hover:bg-blue-700 shadow-md"
+                >
+                  {(bulkImporting || createQuestionMutation.isPending) && (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  )}
+                  Paste qilingan savollarni import qilish
+                </Button>
+              </div>
+
+              <div className="border border-border rounded-xl p-5 bg-slate-50/50 space-y-4">
+                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                  Jarayon qoidalari
+                </h4>
+                <ul className="text-xs font-semibold text-slate-500 space-y-2">
+                  <li className="flex gap-2">
+                    <span className="text-emerald-500 shrink-0">✓</span>
+                    Barcha kiritilgan savollar Supabase ma'lumotlar bazasida
+                    saqlanadi.
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-emerald-500 shrink-0">✓</span>
+                    Matnli savollarni shablon bilan ko'p miqdorda import qilish
+                    mumkin.
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-emerald-500 shrink-0">✓</span>
+                    Rasmli va video testlar URL yoki PC'dan yuklangan fayl bilan
+                    ishlaydi.
+                  </li>
+                </ul>
+              </div>
             </div>
 
-            <div className="col-span-2 flex justify-between gap-3 pt-4 border-t border-border mt-4">
+            <div className="lg:col-span-2 flex justify-between gap-3 pt-4 border-t border-border mt-4">
               <Button
                 type="button"
                 variant="secondary"
@@ -1471,7 +1681,7 @@ export function TestsPage() {
               </div>
 
               {/* Toggles */}
-              <div className="border border-border rounded-2xl p-5 bg-slate-50/50 space-y-4">
+              <div className="border border-border rounded-lg p-5 bg-slate-50/50 space-y-4">
                 <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
                   Qo'shimcha parametrlar
                 </h4>
@@ -1578,7 +1788,7 @@ export function TestsPage() {
             </h3>
 
             <div className="grid gap-5 md:grid-cols-2">
-              <div className="border border-border rounded-2xl p-5 bg-white space-y-4">
+              <div className="border border-border rounded-lg p-5 bg-white space-y-4">
                 <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
                   Test umumiy ma'lumotlari
                 </h4>
@@ -1633,7 +1843,7 @@ export function TestsPage() {
               </div>
 
               {/* Settings and Checklist */}
-              <div className="border border-border rounded-2xl p-5 bg-slate-50/50 space-y-4">
+              <div className="border border-border rounded-lg p-5 bg-slate-50/50 space-y-4">
                 <h4 className="text-xs font-black text-slate-800 uppercase tracking-wide">
                   Tasdiqlash ro'yxati
                 </h4>
@@ -1664,7 +1874,7 @@ export function TestsPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 p-3.5 bg-emerald-50 border border-emerald-100 rounded-xl flex gap-2 items-start">
+                <div className="mt-4 p-3.5 bg-emerald-50 border border-emerald-100 rounded-lg flex gap-2 items-start">
                   <Check className="size-4.5 text-emerald-600 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-[11px] font-extrabold text-emerald-800">

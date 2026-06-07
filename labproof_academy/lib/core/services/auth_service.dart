@@ -71,8 +71,7 @@ class AuthService {
         .eq('id', user.id)
         .maybeSingle();
 
-    final metadata = user.userMetadata ?? {};
-    return (row?['role'] ?? metadata['role'] ?? 'student').toString();
+    return (row?['role'] ?? 'student').toString();
   }
 
   static User? get currentUser {

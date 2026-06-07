@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants/app_language.dart';
@@ -15,6 +14,16 @@ import '../../core/widgets/shared_widgets.dart';
 import '../../data/models/academy_models.dart';
 import 'student_onboarding.dart';
 
+bool _isCompactStudentAuth(BuildContext context) {
+  final size = MediaQuery.sizeOf(context);
+  return size.width <= 430 || size.height <= 760;
+}
+
+bool _isTinyStudentAuth(BuildContext context) {
+  final size = MediaQuery.sizeOf(context);
+  return size.width <= 375 || size.height <= 690;
+}
+
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -22,7 +31,8 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMixin {
+class _SplashScreenState extends State<SplashScreen>
+    with TickerProviderStateMixin {
   late AnimationController _orbitController;
   late AnimationController _pulseController;
   late AnimationController _loadingController;
@@ -48,7 +58,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
 
     _waveController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 25), // Increased duration for much slower, more elegant movement
+      duration: const Duration(
+        seconds: 25,
+      ), // Increased duration for much slower, more elegant movement
     )..repeat();
   }
 
@@ -113,7 +125,8 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                 left: 0,
                 right: 0,
                 bottom: 0,
-                height: 350, // Increased height so tall mountain peaks are not clipped
+                height:
+                    350, // Increased height so tall mountain peaks are not clipped
                 child: AnimatedBuilder(
                   animation: _waveController,
                   builder: (context, child) {
@@ -145,7 +158,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                           fontSize: 15,
                           height: 1.4,
                           fontWeight: FontWeight.w500,
-                          color: isDark ? Colors.white60 : const Color(0xFF6B7280),
+                          color: isDark
+                              ? Colors.white60
+                              : const Color(0xFF6B7280),
                         ),
                       ),
 
@@ -164,7 +179,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w700,
-                                color: isDark ? const Color(0xFFB392FF) : const Color(0xFF7C4DFF),
+                                color: isDark
+                                    ? const Color(0xFFB392FF)
+                                    : const Color(0xFF7C4DFF),
                               ),
                             ),
                           );
@@ -183,6 +200,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     );
   }
 
+  // ignore: unused_element
   Widget _buildCentralAnimation(bool isDark) {
     return Center(
       child: SizedBox(
@@ -198,7 +216,11 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: (isDark ? const Color(0xFFB392FF) : const Color(0xFF7C4DFF)).withValues(alpha: 0.12),
+                  color:
+                      (isDark
+                              ? const Color(0xFFB392FF)
+                              : const Color(0xFF7C4DFF))
+                          .withValues(alpha: 0.12),
                   width: 1.0,
                 ),
               ),
@@ -211,7 +233,11 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: (isDark ? const Color(0xFFB392FF) : const Color(0xFF7C4DFF)).withValues(alpha: 0.08),
+                  color:
+                      (isDark
+                              ? const Color(0xFFB392FF)
+                              : const Color(0xFF7C4DFF))
+                          .withValues(alpha: 0.08),
                   width: 0.8,
                 ),
               ),
@@ -237,7 +263,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       angle: angle + (5 * math.pi / 4),
                       radius: 100,
                       icon: Icons.shield_rounded,
-                      color: isDark ? const Color(0xFF8B5CF6) : const Color(0xFF7C4DFF),
+                      color: isDark
+                          ? const Color(0xFF8B5CF6)
+                          : const Color(0xFF7C4DFF),
                       isDark: isDark,
                     ),
                     // Flask (top-right offset by 7*pi/4)
@@ -245,7 +273,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       angle: angle + (7 * math.pi / 4),
                       radius: 100,
                       icon: Icons.science_rounded,
-                      color: isDark ? const Color(0xFF8B5CF6) : const Color(0xFF7C4DFF),
+                      color: isDark
+                          ? const Color(0xFF8B5CF6)
+                          : const Color(0xFF7C4DFF),
                       isDark: isDark,
                     ),
                     // Book (bottom-left offset by 3*pi/4)
@@ -253,7 +283,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       angle: angle + (3 * math.pi / 4),
                       radius: 100,
                       icon: Icons.menu_book_rounded,
-                      color: isDark ? const Color(0xFF8B5CF6) : const Color(0xFF7C4DFF),
+                      color: isDark
+                          ? const Color(0xFF8B5CF6)
+                          : const Color(0xFF7C4DFF),
                       isDark: isDark,
                     ),
                     // Chart (bottom-right offset by pi/4)
@@ -261,7 +293,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       angle: angle + (math.pi / 4),
                       radius: 100,
                       icon: Icons.bar_chart_rounded,
-                      color: isDark ? const Color(0xFF8B5CF6) : const Color(0xFF7C4DFF),
+                      color: isDark
+                          ? const Color(0xFF8B5CF6)
+                          : const Color(0xFF7C4DFF),
                       isDark: isDark,
                     ),
                   ],
@@ -284,7 +318,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF7C4DFF).withValues(alpha: isDark ? 0.3 : 0.12),
+                          color: const Color(
+                            0xFF7C4DFF,
+                          ).withValues(alpha: isDark ? 0.3 : 0.12),
                           blurRadius: 24,
                           spreadRadius: 2,
                           offset: const Offset(0, 8),
@@ -295,7 +331,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       child: Icon(
                         Icons.biotech_rounded,
                         size: 46,
-                        color: isDark ? const Color(0xFF9B6BFF) : const Color(0xFF7C4DFF),
+                        color: isDark
+                            ? const Color(0xFF9B6BFF)
+                            : const Color(0xFF7C4DFF),
                       ),
                     ),
                   ),
@@ -315,7 +353,10 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
       child: AnimatedBuilder(
         animation: _pulseController,
         builder: (context, child) {
-          final opacity = (baseOpacity + (_pulseController.value * (1.0 - baseOpacity) * 0.4)).clamp(0.0, 1.0);
+          final opacity =
+              (baseOpacity +
+                      (_pulseController.value * (1.0 - baseOpacity) * 0.4))
+                  .clamp(0.0, 1.0);
           return Opacity(
             opacity: opacity,
             child: Icon(
@@ -357,13 +398,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
             ),
           ],
         ),
-        child: Center(
-          child: Icon(
-            icon,
-            size: 24,
-            color: color,
-          ),
-        ),
+        child: Center(child: Icon(icon, size: 24, color: color)),
       ),
     );
   }
@@ -395,6 +430,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     );
   }
 
+  // ignore: unused_element
   Widget _buildCircularLoader(bool isDark) {
     return AnimatedBuilder(
       animation: _loadingController,
@@ -431,7 +467,8 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                 AnimatedBuilder(
                   animation: _pulseController,
                   builder: (context, child) {
-                    final scale = 0.95 + (_pulseController.value * 0.05); // 95% to 100%
+                    final scale =
+                        0.95 + (_pulseController.value * 0.05); // 95% to 100%
                     final glowOpacity = 0.12 + (_pulseController.value * 0.12);
                     final glowSize = 12.0 + (_pulseController.value * 8.0);
 
@@ -441,11 +478,15 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                         width: 52,
                         height: 52,
                         decoration: BoxDecoration(
-                          color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                          color: isDark
+                              ? const Color(0xFF1E293B)
+                              : Colors.white,
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF7C4DFF).withValues(alpha: glowOpacity),
+                              color: const Color(
+                                0xFF7C4DFF,
+                              ).withValues(alpha: glowOpacity),
                               blurRadius: glowSize,
                               spreadRadius: 1.0,
                             ),
@@ -475,7 +516,9 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
-                    color: isDark ? const Color(0xFFB392FF) : const Color(0xFF7C4DFF),
+                    color: isDark
+                        ? const Color(0xFFB392FF)
+                        : const Color(0xFF7C4DFF),
                   ),
                 ),
               ],
@@ -516,7 +559,8 @@ class ParticlesPainter extends CustomPainter {
       final double radius = 1.0 + (i % 3) * 0.6;
       final double opacity = 0.05 + math.sin(phase * 0.4 + i).abs() * 0.07;
 
-      paint.color = (isDark ? const Color(0xFFB392FF) : const Color(0xFF7C4DFF)).withValues(alpha: opacity);
+      paint.color = (isDark ? const Color(0xFFB392FF) : const Color(0xFF7C4DFF))
+          .withValues(alpha: opacity);
       canvas.drawCircle(Offset(x, y), radius, paint);
     }
   }
@@ -564,8 +608,12 @@ class WaveMeshPainter extends CustomPainter {
 
         // Add organic horizontal and depth asymmetry (drift)
         // This breaks the rigid grid and turns it into a natural, scattered sea of particles
-        final double driftX = math.sin(baseTDepth * 15.0 + phase * 2.5 + c * 0.2) * 0.12 + math.cos(r * 0.3) * 0.05;
-        final double driftZ = math.cos(xNorm * 12.0 + phase * 1.8 + r * 0.15) * 0.08 + math.sin(c * 0.25) * 0.04;
+        final double driftX =
+            math.sin(baseTDepth * 15.0 + phase * 2.5 + c * 0.2) * 0.12 +
+            math.cos(r * 0.3) * 0.05;
+        final double driftZ =
+            math.cos(xNorm * 12.0 + phase * 1.8 + r * 0.15) * 0.08 +
+            math.sin(c * 0.25) * 0.04;
 
         xNorm += driftX;
         final double effectiveTDepth = (baseTDepth + driftZ).clamp(0.0, 1.0);
@@ -578,17 +626,23 @@ class WaveMeshPainter extends CustomPainter {
 
         // Sea waves formula with Stokes-like sharpened peaks
         // High frequency to ensure at least 4-5 waves across the screen width
-        final double sinVal1 = math.sin(xNorm * 12.5 - phase * 1.5 + effectiveTDepth * 4.0);
+        final double sinVal1 = math.sin(
+          xNorm * 12.5 - phase * 1.5 + effectiveTDepth * 4.0,
+        );
         final double wave1 = _sharpenWave(sinVal1) * 60.0;
 
-        final double sinVal2 = math.cos(xNorm * 18.0 + phase * 1.2 - effectiveTDepth * 3.0);
+        final double sinVal2 = math.cos(
+          xNorm * 18.0 + phase * 1.2 - effectiveTDepth * 3.0,
+        );
         final double wave2 = _sharpenWave(sinVal2) * 35.0;
 
         // Add an asymmetric third wave to break uniformity
-        final double wave3 = math.sin(xNorm * 25.0 - phase * 2.0 - effectiveTDepth * 2.0) * 20.0;
+        final double wave3 =
+            math.sin(xNorm * 25.0 - phase * 2.0 - effectiveTDepth * 2.0) * 20.0;
 
         // Add a fast high-frequency ripple
-        final double wave4 = math.cos(xNorm * 35.0 + phase * 3.0 + effectiveTDepth * 5.0) * 10.0;
+        final double wave4 =
+            math.cos(xNorm * 35.0 + phase * 3.0 + effectiveTDepth * 5.0) * 10.0;
 
         // Attenuate height: mountains are very tall in the distance, but flat in the foreground.
         final double heightScale = 0.1 + (1.0 - effectiveTDepth) * 1.4;
@@ -596,10 +650,12 @@ class WaveMeshPainter extends CustomPainter {
         // Envelope to curve the sides up (valley layout)
         final double envelope = (xNorm * xNorm) * 60.0;
 
-        final double y3d = (wave1 + wave2 + wave3 + wave4) * heightScale + envelope;
+        final double y3d =
+            (wave1 + wave2 + wave3 + wave4) * heightScale + envelope;
 
         // 3D Y coordinate: base height is calibrated to anchor the grid to the bottom of the widget
-        final double baseHeight3d = size.height * 0.7 + (1.0 - effectiveTDepth) * size.height * 0.4;
+        final double baseHeight3d =
+            size.height * 0.7 + (1.0 - effectiveTDepth) * size.height * 0.4;
 
         // Perspective projection
         final double screenX = vanishingPointX + x3d / z;
@@ -614,18 +670,25 @@ class WaveMeshPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.2; // Very thin, barely visible threads
 
-    final paintDot = Paint()
-      ..style = PaintingStyle.fill;
+    final paintDot = Paint()..style = PaintingStyle.fill;
 
-    final Color frontColor = isDark ? const Color(0xFFB392FF) : const Color(0xFF7C4DFF);
-    final Color backColor = isDark ? const Color(0xFF6366F1).withValues(alpha: 0.5) : const Color(0xFFE9D5FF);
+    final Color frontColor = isDark
+        ? const Color(0xFFB392FF)
+        : const Color(0xFF7C4DFF);
+    final Color backColor = isDark
+        ? const Color(0xFF6366F1).withValues(alpha: 0.5)
+        : const Color(0xFFE9D5FF);
 
     // Batch Drawing for Massive 60fps Performance on Ultra Grids
     // 1. Draw transverse (horizontal) lines
     for (int r = 0; r < rows; r++) {
       final double tDepth = r / (rows - 1);
       final double depthFade = 0.01 + (tDepth * 0.04);
-      paintLine.color = Color.lerp(backColor, frontColor, tDepth)!.withValues(alpha: depthFade);
+      paintLine.color = Color.lerp(
+        backColor,
+        frontColor,
+        tDepth,
+      )!.withValues(alpha: depthFade);
 
       final Path rowPath = Path();
       rowPath.moveTo(grid[r][0].dx, grid[r][0].dy);
@@ -656,8 +719,14 @@ class WaveMeshPainter extends CustomPainter {
       final double tDepth = r / (rows - 1);
       final double depthFade = 0.12 + (tDepth * 0.22);
 
-      paintDot.color = Color.lerp(backColor, frontColor, tDepth)!.withValues(alpha: depthFade);
-      paintDot.strokeWidth = (0.3 + (tDepth * 0.6)) * 2.0; // strokeWidth acts as diameter for PointMode.points
+      paintDot.color = Color.lerp(
+        backColor,
+        frontColor,
+        tDepth,
+      )!.withValues(alpha: depthFade);
+      paintDot.strokeWidth =
+          (0.3 + (tDepth * 0.6)) *
+          2.0; // strokeWidth acts as diameter for PointMode.points
 
       canvas.drawPoints(ui.PointMode.points, grid[r], paintDot);
     }
@@ -713,13 +782,7 @@ class GradientCircularProgressPainter extends CustomPainter {
       canvas.rotate(-math.pi / 2 + rotation * 2 * math.pi);
       canvas.translate(-center.dx, -center.dy);
 
-      canvas.drawArc(
-        rect,
-        0.0,
-        2 * math.pi * progress,
-        false,
-        paint,
-      );
+      canvas.drawArc(rect, 0.0, 2 * math.pi * progress, false, paint);
       canvas.restore();
     }
   }
@@ -731,7 +794,6 @@ class GradientCircularProgressPainter extends CustomPainter {
         oldDelegate.isDark != isDark;
   }
 }
-
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
@@ -782,22 +844,42 @@ class _AuthScreenState extends State<AuthScreen> {
       return Scaffold(
         body: _StudentAuthBackdrop(
           child: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 460),
-                  child: _AuthCard(
-                    isRegister: _isRegister,
-                    role: widget.entryRole,
-                    language: widget.language,
-                    onModeChanged: (value) =>
-                        setState(() => _isRegister = value),
-                    onLanguageChanged: widget.onLanguageChanged,
-                    onSubmit: () => widget.onSignedIn(widget.entryRole),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact =
+                    constraints.maxWidth <= 430 || constraints.maxHeight <= 760;
+                final tiny =
+                    constraints.maxWidth <= 375 || constraints.maxHeight <= 690;
+                final horizontal = tiny ? 10.0 : (compact ? 12.0 : 18.0);
+                final top = tiny ? 8.0 : (compact ? 10.0 : 18.0);
+                final bottom = tiny ? 14.0 : (compact ? 18.0 : 28.0);
+
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontal,
+                      top,
+                      horizontal,
+                      bottom,
+                    ),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: compact ? 430 : (_isRegister ? 760 : 720),
+                      ),
+                      child: _AuthCard(
+                        isRegister: _isRegister,
+                        role: widget.entryRole,
+                        language: widget.language,
+                        onModeChanged: (value) =>
+                            setState(() => _isRegister = value),
+                        onLanguageChanged: widget.onLanguageChanged,
+                        onSubmit: () => widget.onSignedIn(widget.entryRole),
+                      ),
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
         ),
@@ -1721,7 +1803,9 @@ class _StudentAuthBackdrop extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFF8B5CF6).withValues(alpha: isDark ? 0.2 : 0.1),
+                    const Color(
+                      0xFF8B5CF6,
+                    ).withValues(alpha: isDark ? 0.2 : 0.1),
                     Colors.transparent,
                   ],
                 ),
@@ -1738,7 +1822,9 @@ class _StudentAuthBackdrop extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFF3B82F6).withValues(alpha: isDark ? 0.2 : 0.1),
+                    const Color(
+                      0xFF3B82F6,
+                    ).withValues(alpha: isDark ? 0.2 : 0.1),
                     Colors.transparent,
                   ],
                 ),
@@ -1759,8 +1845,11 @@ class _StudentAuthLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final logoSize = compact ? 48.0 : 58.0;
+    final autoCompact = compact || _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
+    final logoSize = tiny ? 38.0 : (autoCompact ? 42.0 : 58.0);
+    final brandSize = tiny ? 21.0 : (autoCompact ? 23.0 : 31.0);
+    final academySize = tiny ? 10.5 : (autoCompact ? 12.0 : 14.0);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1768,7 +1857,7 @@ class _StudentAuthLogo extends StatelessWidget {
           width: logoSize,
           height: logoSize,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(autoCompact ? 14 : 18),
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -1777,18 +1866,18 @@ class _StudentAuthLogo extends StatelessWidget {
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF6D28D9).withValues(alpha: .45),
-                blurRadius: 28,
-                offset: const Offset(0, 12),
+                blurRadius: autoCompact ? 18 : 28,
+                offset: Offset(0, autoCompact ? 8 : 12),
               ),
             ],
           ),
           child: Icon(
             Icons.biotech_rounded,
             color: Colors.white,
-            size: compact ? 28 : 34,
+            size: tiny ? 22 : (autoCompact ? 25 : 34),
           ),
         ),
-        const SizedBox(width: 14),
+        SizedBox(width: autoCompact ? 9 : 14),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -1798,19 +1887,19 @@ class _StudentAuthLogo extends StatelessWidget {
               style: TextStyle(
                 fontFamily: 'Barabara',
                 color: const Color(0xFF9B6BFF),
-                fontSize: compact ? 25 : 31,
+                fontSize: brandSize,
                 height: 1,
-                letterSpacing: 1.0,
+                letterSpacing: 0,
               ),
             ),
-            const SizedBox(height: 2),
+            SizedBox(height: autoCompact ? 1 : 2),
             Text(
               'ACADEMY',
               style: TextStyle(
                 fontFamily: 'Barabara',
                 color: const Color(0xFF9B6BFF),
-                fontSize: 14,
-                letterSpacing: 1.5,
+                fontSize: academySize,
+                letterSpacing: 0,
               ),
             ),
           ],
@@ -1832,6 +1921,7 @@ class _StudentLanguageButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -1876,7 +1966,10 @@ class _StudentLanguageButton extends StatelessWidget {
           if (picked != null) onChanged(picked);
         },
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 12,
+            vertical: compact ? 8 : 10,
+          ),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1E293B) : Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -1893,14 +1986,17 @@ class _StudentLanguageButton extends StatelessWidget {
                 language.shortLabel,
                 style: TextStyle(
                   color: isDark ? Colors.white : const Color(0xFF0F172A),
+                  fontSize: compact ? 12 : null,
                   fontWeight: FontWeight.w900,
                 ),
               ),
-              const SizedBox(width: 4),
+              SizedBox(width: compact ? 2 : 4),
               Icon(
                 Icons.keyboard_arrow_down_rounded,
-                color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF64748B),
-                size: 18,
+                color: isDark
+                    ? const Color(0xFFB7C0D6)
+                    : const Color(0xFF64748B),
+                size: compact ? 16 : 18,
               ),
             ],
           ),
@@ -1918,17 +2014,19 @@ class _StudentBackButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
+    final size = compact ? 40.0 : 46.0;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Container(
-          width: 46,
-          height: 46,
+          width: size,
+          height: size,
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1E293B) : Colors.white,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(compact ? 14 : 16),
             border: Border.all(
               color: isDark
                   ? Colors.white.withValues(alpha: .05)
@@ -1938,7 +2036,7 @@ class _StudentBackButton extends StatelessWidget {
           child: Icon(
             Icons.arrow_back_rounded,
             color: isDark ? Colors.white : const Color(0xFF0F172A),
-            size: 24,
+            size: compact ? 21 : 24,
           ),
         ),
       ),
@@ -1954,18 +2052,20 @@ class _StudentGlassPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
     return Container(
-      padding: const EdgeInsets.all(28),
+      padding: EdgeInsets.all(tiny ? 16 : (compact ? 18 : 28)),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E293B) : Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(compact ? 20 : 24),
         boxShadow: [
           BoxShadow(
             color: isDark
                 ? Colors.black.withValues(alpha: .3)
                 : const Color(0xFF64748B).withValues(alpha: .08),
-            blurRadius: 34,
-            offset: const Offset(0, 12),
+            blurRadius: compact ? 18 : 34,
+            offset: Offset(0, compact ? 8 : 12),
           ),
         ],
         border: Border.all(
@@ -1988,27 +2088,33 @@ class _StudentSectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
     return Row(
       children: [
         Container(
-          width: 36,
-          height: 36,
+          width: tiny ? 30 : (compact ? 32 : 36),
+          height: tiny ? 30 : (compact ? 32 : 36),
           decoration: BoxDecoration(
             color: const Color(0xFF7C3AED).withValues(alpha: .18),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(compact ? 10 : 12),
             border: Border.all(
               color: const Color(0xFFA855F7).withValues(alpha: .30),
             ),
           ),
-          child: Icon(icon, color: const Color(0xFFA855F7), size: 21),
+          child: Icon(
+            icon,
+            color: const Color(0xFFA855F7),
+            size: tiny ? 18 : (compact ? 19 : 21),
+          ),
         ),
-        const SizedBox(width: 12),
+        SizedBox(width: compact ? 10 : 12),
         Expanded(
           child: Text(
             title,
             style: TextStyle(
               color: isDark ? Colors.white : const Color(0xFF1E293B),
-              fontSize: 16,
+              fontSize: tiny ? 14 : (compact ? 15 : 16),
               fontWeight: FontWeight.w900,
             ),
           ),
@@ -2028,6 +2134,7 @@ class _StudentAuthInput extends StatelessWidget {
     this.suffix,
     this.textInputAction,
     this.onSubmitted,
+    this.onChanged,
   });
 
   final String label;
@@ -2038,10 +2145,13 @@ class _StudentAuthInput extends StatelessWidget {
   final Widget? suffix;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onSubmitted;
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2049,20 +2159,21 @@ class _StudentAuthInput extends StatelessWidget {
           label,
           style: TextStyle(
             color: isDark ? Colors.white : const Color(0xFF1E293B),
-            fontSize: 13,
+            fontSize: tiny ? 11.5 : (compact ? 12.0 : 13.0),
             fontWeight: FontWeight.w800,
           ),
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: tiny ? 5 : (compact ? 6 : 8)),
         TextField(
           controller: controller,
           obscureText: obscureText,
           textInputAction: textInputAction,
           onSubmitted: onSubmitted,
+          onChanged: onChanged,
           style: TextStyle(
             color: isDark ? Colors.white : const Color(0xFF0F172A),
             fontWeight: FontWeight.w700,
-            fontSize: 16,
+            fontSize: tiny ? 14.0 : (compact ? 15.0 : 16.0),
           ),
           cursorColor: const Color(0xFFA855F7),
           decoration: InputDecoration(
@@ -2071,28 +2182,38 @@ class _StudentAuthInput extends StatelessWidget {
               color: isDark ? const Color(0xFF8994AA) : const Color(0xFF94A3B8),
               fontWeight: FontWeight.w600,
             ),
-            prefixIcon: Icon(icon, color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF64748B)),
+            prefixIcon: Icon(
+              icon,
+              color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF64748B),
+              size: tiny ? 19 : (compact ? 20 : 24),
+            ),
             suffixIcon: suffix,
             filled: true,
-            fillColor: isDark ? const Color(0xFF081426).withValues(alpha: .92) : const Color(0xFFF8FAFC),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 17,
+            fillColor: isDark
+                ? const Color(0xFF081426).withValues(alpha: .92)
+                : const Color(0xFFF8FAFC),
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: tiny ? 12 : (compact ? 14 : 16),
+              vertical: tiny ? 12 : (compact ? 14 : 17),
             ),
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(compact ? 12 : 14),
               borderSide: BorderSide(
-                color: isDark ? Colors.white.withValues(alpha: .09) : const Color(0xFFE2E8F0),
+                color: isDark
+                    ? Colors.white.withValues(alpha: .09)
+                    : const Color(0xFFE2E8F0),
               ),
             ),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(compact ? 12 : 14),
               borderSide: BorderSide(
-                color: isDark ? Colors.white.withValues(alpha: .09) : const Color(0xFFE2E8F0),
+                color: isDark
+                    ? Colors.white.withValues(alpha: .09)
+                    : const Color(0xFFE2E8F0),
               ),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(compact ? 12 : 14),
               borderSide: const BorderSide(
                 color: Color(0xFF8B5CF6),
                 width: 1.3,
@@ -2114,6 +2235,8 @@ class _StudentPhoneInput extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2121,40 +2244,50 @@ class _StudentPhoneInput extends StatelessWidget {
           label,
           style: TextStyle(
             color: isDark ? Colors.white : const Color(0xFF1E293B),
-            fontSize: 13,
+            fontSize: tiny ? 11.5 : (compact ? 12.0 : 13.0),
             fontWeight: FontWeight.w800,
           ),
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: tiny ? 5 : (compact ? 6 : 8)),
         Container(
-          height: 58,
+          height: tiny ? 48 : (compact ? 50 : 58),
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF081426).withValues(alpha: .92) : const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: isDark ? Colors.white.withValues(alpha: .09) : const Color(0xFFE2E8F0)),
+            color: isDark
+                ? const Color(0xFF081426).withValues(alpha: .92)
+                : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(compact ? 12 : 14),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: .09)
+                  : const Color(0xFFE2E8F0),
+            ),
           ),
           child: Row(
             children: [
-              const SizedBox(width: 14),
+              SizedBox(width: tiny ? 10 : (compact ? 12 : 14)),
               Icon(
                 Icons.phone_rounded,
-                color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF64748B),
-                size: 22,
+                color: isDark
+                    ? const Color(0xFFB7C0D6)
+                    : const Color(0xFF64748B),
+                size: tiny ? 19 : (compact ? 20 : 22),
               ),
-              const SizedBox(width: 12),
+              SizedBox(width: compact ? 9 : 12),
               Text(
                 '+998',
                 style: TextStyle(
                   color: isDark ? Colors.white : const Color(0xFF0F172A),
                   fontWeight: FontWeight.w900,
-                  fontSize: 16,
+                  fontSize: tiny ? 14 : (compact ? 15 : 16),
                 ),
               ),
               Container(
                 width: 1,
-                height: 28,
-                margin: const EdgeInsets.symmetric(horizontal: 12),
-                color: isDark ? Colors.white.withValues(alpha: .09) : const Color(0xFFE2E8F0),
+                height: compact ? 24 : 28,
+                margin: EdgeInsets.symmetric(horizontal: compact ? 9 : 12),
+                color: isDark
+                    ? Colors.white.withValues(alpha: .09)
+                    : const Color(0xFFE2E8F0),
               ),
               Expanded(
                 child: TextField(
@@ -2167,13 +2300,15 @@ class _StudentPhoneInput extends StatelessWidget {
                   style: TextStyle(
                     color: isDark ? Colors.white : const Color(0xFF0F172A),
                     fontWeight: FontWeight.w800,
-                    fontSize: 16,
+                    fontSize: tiny ? 14 : (compact ? 15 : 16),
                   ),
                   cursorColor: const Color(0xFFA855F7),
                   decoration: InputDecoration(
                     hintText: '90 123 45 67',
                     hintStyle: TextStyle(
-                      color: isDark ? const Color(0xFF8994AA) : const Color(0xFF94A3B8),
+                      color: isDark
+                          ? const Color(0xFF8994AA)
+                          : const Color(0xFF94A3B8),
                       fontWeight: FontWeight.w600,
                     ),
                     border: InputBorder.none,
@@ -2184,7 +2319,7 @@ class _StudentPhoneInput extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: tiny ? 10 : (compact ? 12 : 14)),
             ],
           ),
         ),
@@ -2192,8 +2327,6 @@ class _StudentPhoneInput extends StatelessWidget {
     );
   }
 }
-
-
 
 class _StudentGradientButton extends StatelessWidget {
   const _StudentGradientButton({
@@ -2210,23 +2343,25 @@ class _StudentGradientButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(compact ? 12 : 14),
         onTap: loading ? null : onPressed,
         child: Ink(
-          height: 58,
+          height: tiny ? 48 : (compact ? 50 : 58),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(compact ? 12 : 14),
             gradient: const LinearGradient(
               colors: [Color(0xFF2B49FF), Color(0xFF8B2BEA)],
             ),
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF7C3AED).withValues(alpha: .36),
-                blurRadius: 24,
-                offset: const Offset(0, 12),
+                blurRadius: compact ? 16 : 24,
+                offset: Offset(0, compact ? 8 : 12),
               ),
             ],
           ),
@@ -2245,21 +2380,21 @@ class _StudentGradientButton extends StatelessWidget {
                     children: [
                       if (prefixIcon != null) ...[
                         prefixIcon!,
-                        const SizedBox(width: 12),
+                        SizedBox(width: compact ? 9 : 12),
                       ],
                       Text(
                         label,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Colors.white,
-                          fontSize: 17,
+                          fontSize: tiny ? 14.5 : (compact ? 15.5 : 17),
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      const SizedBox(width: 14),
-                      const Icon(
+                      SizedBox(width: compact ? 10 : 14),
+                      Icon(
                         Icons.arrow_forward_rounded,
                         color: Colors.white,
-                        size: 24,
+                        size: tiny ? 20 : (compact ? 22 : 24),
                       ),
                     ],
                   ),
@@ -2306,11 +2441,15 @@ class _StudentAuthModeSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final dividerColor = isDark ? Colors.white.withValues(alpha: .10) : const Color(0xFFE2E8F0);
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
+    final dividerColor = isDark
+        ? Colors.white.withValues(alpha: .10)
+        : const Color(0xFFE2E8F0);
     return Row(
       children: [
         Expanded(child: Divider(color: dividerColor)),
-        const SizedBox(width: 12),
+        SizedBox(width: compact ? 8 : 12),
         Flexible(
           flex: 0,
           child: Wrap(
@@ -2320,8 +2459,10 @@ class _StudentAuthModeSwitch extends StatelessWidget {
               Text(
                 leading,
                 style: TextStyle(
-                  color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF64748B),
-                  fontSize: 14,
+                  color: isDark
+                      ? const Color(0xFFB7C0D6)
+                      : const Color(0xFF64748B),
+                  fontSize: tiny ? 12 : (compact ? 12.5 : 14),
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -2329,18 +2470,21 @@ class _StudentAuthModeSwitch extends StatelessWidget {
                 onPressed: onTap,
                 style: TextButton.styleFrom(
                   foregroundColor: const Color(0xFFA855F7),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  minimumSize: const Size(0, 36),
+                  padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 6),
+                  minimumSize: Size(0, compact ? 30 : 36),
                 ),
                 child: Text(
                   action,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
+                  style: TextStyle(
+                    fontSize: tiny ? 12 : (compact ? 12.5 : null),
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(width: 12),
+        SizedBox(width: compact ? 8 : 12),
         Expanded(child: Divider(color: dividerColor)),
       ],
     );
@@ -2355,23 +2499,25 @@ class _StudentSecureCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
     return _StudentGlassPanel(
       child: Row(
         children: [
           Container(
-            width: 56,
-            height: 56,
+            width: tiny ? 44 : (compact ? 48 : 56),
+            height: tiny ? 44 : (compact ? 48 : 56),
             decoration: BoxDecoration(
               color: const Color(0xFF7C3AED).withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(compact ? 14 : 18),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.shield_outlined,
-              color: Color(0xFFA855F7),
-              size: 36,
+              color: const Color(0xFFA855F7),
+              size: tiny ? 27 : (compact ? 30 : 36),
             ),
           ),
-          const SizedBox(width: 16),
+          SizedBox(width: compact ? 12 : 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2380,22 +2526,216 @@ class _StudentSecureCard extends StatelessWidget {
                   studentText(language, 'secure_title'),
                   style: TextStyle(
                     color: isDark ? Colors.white : const Color(0xFF0F172A),
-                    fontSize: 16,
+                    fontSize: tiny ? 14 : (compact ? 15 : 16),
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                const SizedBox(height: 6),
+                SizedBox(height: compact ? 4 : 6),
                 Text(
                   studentText(language, 'secure_desc'),
                   style: TextStyle(
-                    color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF475569),
+                    color: isDark
+                        ? const Color(0xFFB7C0D6)
+                        : const Color(0xFF475569),
                     height: 1.45,
-                    fontSize: 14,
+                    fontSize: tiny ? 12 : (compact ? 13 : 14),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StudentRegisterHero extends StatelessWidget {
+  const _StudentRegisterHero({required this.language});
+
+  final AppLanguage language;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 560;
+        final title = studentText(language, 'create_account');
+        final subtitle = studentText(language, 'register_subtitle');
+        final copy = Column(
+          crossAxisAlignment: wide
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
+          children: [
+            Text(
+              title,
+              textAlign: wide ? TextAlign.left : TextAlign.center,
+              style: TextStyle(
+                color: isDark ? Colors.white : const Color(0xFF0F172A),
+                fontSize: wide ? 32 : (tiny ? 21 : (compact ? 23 : 26)),
+                fontWeight: FontWeight.w900,
+                height: 1.08,
+              ),
+            ),
+            SizedBox(height: compact ? 7 : 10),
+            Text(
+              subtitle,
+              textAlign: wide ? TextAlign.left : TextAlign.center,
+              style: TextStyle(
+                color: isDark
+                    ? const Color(0xFFD1D5DB)
+                    : const Color(0xFF55627A),
+                fontSize: wide ? 16 : (tiny ? 12 : (compact ? 12.5 : 14)),
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        );
+
+        return Padding(
+          padding: EdgeInsets.only(
+            top: wide ? 14 : (tiny ? 4 : (compact ? 6 : 8)),
+            bottom: wide ? 22 : (tiny ? 10 : (compact ? 12 : 16)),
+          ),
+          child: Align(
+            alignment: wide ? Alignment.centerLeft : Alignment.center,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: wide ? 560 : 360),
+              child: copy,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PasswordStrengthMeter extends StatelessWidget {
+  const _PasswordStrengthMeter({
+    required this.password,
+    required this.language,
+  });
+
+  final String password;
+  final AppLanguage language;
+
+  int get _score {
+    var score = 0;
+    if (password.length >= 6) score++;
+    if (RegExp(r'[A-ZА-Я]').hasMatch(password)) score++;
+    if (RegExp(r'\d').hasMatch(password)) score++;
+    if (RegExp(r'[^A-Za-zА-Яа-я0-9]').hasMatch(password)) score++;
+    return score.clamp(0, 4);
+  }
+
+  String _label() {
+    if (_score <= 1) {
+      return language == AppLanguage.ru
+          ? 'Слабый'
+          : language == AppLanguage.uzCyrillic
+          ? 'Заиф'
+          : 'Zaif';
+    }
+    if (_score <= 3) {
+      return language == AppLanguage.ru
+          ? 'Средний'
+          : language == AppLanguage.uzCyrillic
+          ? 'Ўртача'
+          : 'O‘rtacha';
+    }
+    return language == AppLanguage.ru
+        ? 'Надежный'
+        : language == AppLanguage.uzCyrillic
+        ? 'Ишончли'
+        : 'Ishonchli';
+  }
+
+  Color _color() {
+    if (_score <= 1) return const Color(0xFFEC4899);
+    if (_score <= 3) return const Color(0xFFF59E0B);
+    return const Color(0xFF22C55E);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final text = language == AppLanguage.ru
+        ? 'Надежность пароля'
+        : language == AppLanguage.uzCyrillic
+        ? 'Парол кучи'
+        : 'Parol kuchi';
+    final color = _color();
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: isDark ? .16 : .10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: .28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.security_rounded, size: 16, color: color),
+              const SizedBox(width: 8),
+              Text(
+                '$text:',
+                style: TextStyle(
+                  color: isDark
+                      ? const Color(0xFFB7C0D6)
+                      : const Color(0xFF64748B),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _label(),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: List.generate(4, (index) {
+              final active = index < _score;
+              return Expanded(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  height: 5,
+                  margin: EdgeInsets.only(left: index == 0 ? 0 : 6),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? color
+                        : isDark
+                        ? Colors.white.withValues(alpha: .10)
+                        : const Color(0xFFE2E8F0),
+                    borderRadius: BorderRadius.circular(99),
+                    boxShadow: active
+                        ? [
+                            BoxShadow(
+                              color: color.withValues(alpha: .22),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ]
+                        : null,
+                  ),
+                ),
+              );
+            }),
           ),
         ],
       ),
@@ -2417,11 +2757,29 @@ class _StudentStepper extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        _buildStep(context, 1, studentText(language, 'step_info'), step >= 1, step > 1),
-        _buildConnector(step > 1),
-        _buildStep(context, 2, studentText(language, 'step_verify'), step >= 2, step > 2),
-        _buildConnector(step > 2),
-        _buildStep(context, 3, studentText(language, 'step_complete'), step >= 3, false),
+        _buildStep(
+          context,
+          1,
+          studentText(language, 'step_info'),
+          step >= 1,
+          step > 1,
+        ),
+        _buildConnector(context, step > 1),
+        _buildStep(
+          context,
+          2,
+          studentText(language, 'step_verify'),
+          step >= 2,
+          step > 2,
+        ),
+        _buildConnector(context, step > 2),
+        _buildStep(
+          context,
+          3,
+          studentText(language, 'step_complete'),
+          step >= 3,
+          false,
+        ),
       ],
     );
   }
@@ -2435,29 +2793,32 @@ class _StudentStepper extends StatelessWidget {
   ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = const Color(0xFF8B5CF6);
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
+    final circleSize = tiny ? 26.0 : (compact ? 28.0 : 32.0);
 
     return Expanded(
       child: Column(
         children: [
           AnimatedContainer(
             duration: const Duration(milliseconds: 300),
-            width: 32,
-            height: 32,
+            width: circleSize,
+            height: circleSize,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: completed
                   ? primaryColor
                   : active
-                      ? primaryColor.withValues(alpha: 0.15)
-                      : isDark
-                          ? Colors.white.withValues(alpha: 0.05)
-                          : const Color(0xFFF1F5F9),
+                  ? primaryColor.withValues(alpha: 0.15)
+                  : isDark
+                  ? Colors.white.withValues(alpha: 0.05)
+                  : const Color(0xFFF1F5F9),
               border: Border.all(
                 color: completed || active
                     ? primaryColor
                     : isDark
-                        ? Colors.white.withValues(alpha: 0.1)
-                        : const Color(0xFFE2E8F0),
+                    ? Colors.white.withValues(alpha: 0.1)
+                    : const Color(0xFFE2E8F0),
                 width: 2,
               ),
               boxShadow: active && !completed
@@ -2466,44 +2827,44 @@ class _StudentStepper extends StatelessWidget {
                         color: primaryColor.withValues(alpha: 0.3),
                         blurRadius: 8,
                         offset: const Offset(0, 2),
-                      )
+                      ),
                     ]
                   : null,
             ),
             child: Center(
               child: completed
-                  ? const Icon(
+                  ? Icon(
                       Icons.check,
                       color: Colors.white,
-                      size: 16,
+                      size: tiny ? 13 : (compact ? 14 : 16),
                     )
                   : Text(
                       '$index',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: tiny ? 12 : (compact ? 13 : 14),
                         fontWeight: FontWeight.w800,
                         color: completed
                             ? Colors.white
                             : active
-                                ? primaryColor
-                                : isDark
-                                    ? const Color(0xFF64748B)
-                                    : const Color(0xFF94A3B8),
+                            ? primaryColor
+                            : isDark
+                            ? const Color(0xFF64748B)
+                            : const Color(0xFF94A3B8),
                       ),
                     ),
             ),
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: compact ? 4 : 6),
           Text(
             label,
             style: TextStyle(
-              fontSize: 11,
+              fontSize: tiny ? 9.5 : (compact ? 10 : 11),
               fontWeight: active ? FontWeight.w800 : FontWeight.w600,
               color: active
                   ? primaryColor
                   : isDark
-                      ? const Color(0xFF64748B)
-                      : const Color(0xFF94A3B8),
+                  ? const Color(0xFF64748B)
+                  : const Color(0xFF94A3B8),
             ),
           ),
         ],
@@ -2511,11 +2872,13 @@ class _StudentStepper extends StatelessWidget {
     );
   }
 
-  Widget _buildConnector(bool completed) {
+  Widget _buildConnector(BuildContext context, bool completed) {
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
     return Container(
-      width: 24,
+      width: tiny ? 14 : (compact ? 17 : 24),
       height: 2,
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: EdgeInsets.only(bottom: tiny ? 13 : (compact ? 14 : 16)),
       decoration: BoxDecoration(
         color: completed
             ? const Color(0xFF8B5CF6)
@@ -2547,9 +2910,10 @@ class _VerificationRequiredIllustrationState
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    _floatAnimation = Tween<double>(begin: -5.0, end: 5.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _floatAnimation = Tween<double>(
+      begin: -5.0,
+      end: 5.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
   }
 
   @override
@@ -2570,7 +2934,8 @@ class _VerificationRequiredIllustrationState
     } else if (screenHeight < 800) {
       illustrationSize = 130.0;
     } else if (screenHeight < 860) {
-      illustrationSize = 148.0; // Sweet spot size for iPhone 14 Pro (852px screen height)
+      illustrationSize =
+          148.0; // Sweet spot size for iPhone 14 Pro (852px screen height)
     } else {
       illustrationSize = 165.0;
     }
@@ -2598,10 +2963,14 @@ class _VerificationRequiredIllustrationState
                 height: illustrationSize - 10,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFF0088CC).withValues(alpha: isDark ? 0.08 : 0.05),
+                  color: const Color(
+                    0xFF0088CC,
+                  ).withValues(alpha: isDark ? 0.08 : 0.05),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF0088CC).withValues(alpha: isDark ? 0.15 : 0.1),
+                      color: const Color(
+                        0xFF0088CC,
+                      ).withValues(alpha: isDark ? 0.15 : 0.1),
                       blurRadius: 32,
                       spreadRadius: 8,
                     ),
@@ -2667,11 +3036,7 @@ class _VerificationBulletItem extends StatelessWidget {
               shape: BoxShape.circle,
               color: const Color(0xFF10B981).withValues(alpha: 0.15),
             ),
-            child: const Icon(
-              Icons.check,
-              size: 14,
-              color: Color(0xFF10B981),
-            ),
+            child: const Icon(Icons.check, size: 14, color: Color(0xFF10B981)),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -2681,7 +3046,9 @@ class _VerificationBulletItem extends StatelessWidget {
                 fontSize: 13,
                 height: 1.4,
                 fontWeight: FontWeight.w600,
-                color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF475569),
+                color: isDark
+                    ? const Color(0xFFB7C0D6)
+                    : const Color(0xFF475569),
               ),
             ),
           ),
@@ -2712,9 +3079,10 @@ class _VerifyTelegramIllustrationState
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    _floatAnimation = Tween<double>(begin: -5.0, end: 5.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+    _floatAnimation = Tween<double>(
+      begin: -5.0,
+      end: 5.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
   }
 
   @override
@@ -2735,7 +3103,8 @@ class _VerifyTelegramIllustrationState
     } else if (screenHeight < 800) {
       illustrationSize = 130.0;
     } else if (screenHeight < 860) {
-      illustrationSize = 148.0; // Sweet spot size for iPhone 14 Pro (852px screen height)
+      illustrationSize =
+          148.0; // Sweet spot size for iPhone 14 Pro (852px screen height)
     } else {
       illustrationSize = 165.0;
     }
@@ -2763,10 +3132,14 @@ class _VerifyTelegramIllustrationState
                 height: illustrationSize - 10,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFF0088CC).withValues(alpha: isDark ? 0.08 : 0.05),
+                  color: const Color(
+                    0xFF0088CC,
+                  ).withValues(alpha: isDark ? 0.08 : 0.05),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF0088CC).withValues(alpha: isDark ? 0.15 : 0.1),
+                      color: const Color(
+                        0xFF0088CC,
+                      ).withValues(alpha: isDark ? 0.15 : 0.1),
                       blurRadius: 32,
                       spreadRadius: 8,
                     ),
@@ -2810,7 +3183,6 @@ class _VerifyTelegramIllustrationState
     );
   }
 }
-
 
 class _StudentOtpInput extends StatefulWidget {
   const _StudentOtpInput({
@@ -2867,12 +3239,8 @@ class _StudentOtpInputState extends State<_StudentOtpInput> {
               textInputAction: TextInputAction.done,
               maxLength: 4,
               onChanged: widget.onChanged,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-              ],
-              decoration: const InputDecoration(
-                counterText: '',
-              ),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(counterText: ''),
             ),
           ),
         ),
@@ -2884,7 +3252,8 @@ class _StudentOtpInputState extends State<_StudentOtpInput> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(4, (index) {
-              final isFocused = widget.focusNode.hasFocus && _code.length == index;
+              final isFocused =
+                  widget.focusNode.hasFocus && _code.length == index;
               final char = _code.length > index ? _code[index] : '';
 
               return Container(
@@ -2901,17 +3270,19 @@ class _StudentOtpInputState extends State<_StudentOtpInput> {
                     color: isFocused
                         ? const Color(0xFF8B5CF6)
                         : isDark
-                            ? Colors.white.withValues(alpha: 0.08)
-                            : const Color(0xFFCBD5E1),
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : const Color(0xFFCBD5E1),
                     width: isFocused ? 2 : 1,
                   ),
                   boxShadow: isFocused
                       ? [
                           BoxShadow(
-                            color: const Color(0xFF8B5CF6).withValues(alpha: 0.2),
+                            color: const Color(
+                              0xFF8B5CF6,
+                            ).withValues(alpha: 0.2),
                             blurRadius: 8,
                             spreadRadius: 1,
-                          )
+                          ),
                         ]
                       : null,
                 ),
@@ -2997,10 +3368,7 @@ class _SuccessShieldIllustrationState extends State<_SuccessShieldIllustration>
 }
 
 class _VerifiedDetailsCard extends StatelessWidget {
-  const _VerifiedDetailsCard({
-    required this.phone,
-    required this.language,
-  });
+  const _VerifiedDetailsCard({required this.phone, required this.language});
 
   final String phone;
   final AppLanguage language;
@@ -3102,11 +3470,7 @@ class _VerifiedDetailsCard extends StatelessWidget {
             shape: BoxShape.circle,
             color: accentColor.withValues(alpha: 0.12),
           ),
-          child: Icon(
-            icon,
-            size: 16,
-            color: accentColor,
-          ),
+          child: Icon(icon, size: 16, color: accentColor),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -3118,7 +3482,9 @@ class _VerifiedDetailsCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
+                  color: isDark
+                      ? const Color(0xFF64748B)
+                      : const Color(0xFF94A3B8),
                 ),
               ),
               const SizedBox(height: 2),
@@ -3196,6 +3562,19 @@ class _AuthCardState extends State<_AuthCard> {
   int _secondsRemaining = 180;
 
   @override
+  void initState() {
+    super.initState();
+    _passwordController.addListener(_refreshPasswordStrength);
+  }
+
+  void _refreshPasswordStrength() {
+    if (!mounted || widget.role != UserRole.student || !widget.isRegister) {
+      return;
+    }
+    setState(() {});
+  }
+
+  @override
   void didUpdateWidget(covariant _AuthCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isRegister != widget.isRegister ||
@@ -3212,6 +3591,7 @@ class _AuthCardState extends State<_AuthCard> {
 
   @override
   void dispose() {
+    _passwordController.removeListener(_refreshPasswordStrength);
     _nameController.dispose();
     _lastNameController.dispose();
     _adminLoginController.dispose();
@@ -3240,14 +3620,16 @@ class _AuthCardState extends State<_AuthCard> {
       'step_verify': 'Tasdiqlash',
       'step_complete': 'Tugatish',
       'verification_required': 'Telegram orqali hisobni tasdiqlang',
-      'telegram_secures': 'Telegram bot orqali akkauntingizni xavfsiz tasdiqlang va aktivlashtiring.',
+      'telegram_secures':
+          'Telegram bot orqali akkauntingizni xavfsiz tasdiqlang va aktivlashtiring.',
       'bullet_secure': 'Rasmiy Telegram Bot orqali xavfsiz tasdiqlash',
       'bullet_instant': 'Lahzali tasdiqlash kodi',
       'bullet_support': 'Shaxsiy yordam kanaliga ulanish',
       'continue_to_verify': 'Telegram botni ochish',
       'secure_data_note': 'Sizning ma\'lumotlaringiz xavfsiz va himoyalangan',
       'verify_your_account': 'Hisobni tasdiqlash',
-      'send_code_note': 'Biz sizning Telegram botingizga tasdiqlash kodini yuboramiz.',
+      'send_code_note':
+          'Biz sizning Telegram botingizga tasdiqlash kodini yuboramiz.',
       'what_happens_next': 'Qanday ishlaydi?',
       'step_open_bot': 'Telegram bot\nochiladi',
       'step_press_start': 'Start tugmasini\nbosing',
@@ -3258,13 +3640,16 @@ class _AuthCardState extends State<_AuthCard> {
       'step3_desc': 'Kod hisobingizni tasdiqlash uchun shu yerga kiritiladi',
       'open_telegram_bot': 'Telegram botni ochish',
       'enter_code': 'Tasdiqlash kodini kiriting',
-      'enter_code_sent': 'Telegram botimiz yuborgan tasdiqlash kodini kiriting.',
+      'enter_code_sent':
+          'Telegram botimiz yuborgan tasdiqlash kodini kiriting.',
       'code_expires': 'Kodning amal qilish vaqti',
-      'not_received': 'Kodni olmadingizmi? Botni ishga tushirganingizga ishonch hosil qiling.',
+      'not_received':
+          'Kodni olmadingizmi? Botni ishga tushirganingizga ishonch hosil qiling.',
       'resend_code': 'Kodni qayta yuborish',
       'verify_continue': 'Tasdiqlash va davom etish',
       'all_set': 'Hammasi tayyor! 🎉',
-      'success_verified': 'Hisobingiz muvaffaqiyatli tasdiqlandi va faollashtirildi.',
+      'success_verified':
+          'Hisobingiz muvaffaqiyatli tasdiqlandi va faollashtirildi.',
       'acc_status': 'Hisob holati',
       'phone_num': 'Telefon raqam',
       'verified_at': 'Tasdiqlangan vaqt',
@@ -3277,7 +3662,8 @@ class _AuthCardState extends State<_AuthCard> {
       'step_verify': 'Проверка',
       'step_complete': 'Готово',
       'verification_required': 'Подтвердите аккаунт через Telegram',
-      'telegram_secures': 'Безопасно подтвердите и активируйте свой аккаунт с помощью Telegram-бота.',
+      'telegram_secures':
+          'Безопасно подтвердите и активируйте свой аккаунт с помощью Telegram-бота.',
       'bullet_secure': 'Безопасная проверка через официальный Telegram-бот',
       'bullet_instant': 'Мгновенный код подтверждения',
       'bullet_support': 'Доступ к каналу персональной поддержки',
@@ -3295,7 +3681,8 @@ class _AuthCardState extends State<_AuthCard> {
       'step3_desc': 'Введите полученный код здесь для подтверждения',
       'open_telegram_bot': 'Открыть Telegram-бот',
       'enter_code': 'Введите код подтверждения',
-      'enter_code_sent': 'Введите код подтверждения, отправленный нашим Telegram-ботом.',
+      'enter_code_sent':
+          'Введите код подтверждения, отправленный нашим Telegram-ботом.',
       'code_expires': 'Код истекает через',
       'not_received': 'Не получили код? Убедитесь, что запустили бота.',
       'resend_code': 'Отправить код повторно',
@@ -3314,14 +3701,16 @@ class _AuthCardState extends State<_AuthCard> {
       'step_verify': 'Тасдиқлаш',
       'step_complete': 'Тугатиш',
       'verification_required': 'Телеграм орқали ҳисобни тасдиқланг',
-      'telegram_secures': 'Телеграм бот орқали аккаунтингизни хавфсиз тасдиқланг va aktivlashtiring.',
+      'telegram_secures':
+          'Телеграм бот орқали аккаунтингизни хавфсиз тасдиқланг va aktivlashtiring.',
       'bullet_secure': 'Расмий Телеграм Бот орқали хавфсиз тасдиқлаш',
       'bullet_instant': 'Лаҳзали тасдиқлаш коди',
       'bullet_support': 'Шахсий ёрдам каналига уланиш',
       'continue_to_verify': 'Телеграм ботни очиш',
       'secure_data_note': 'Сизнинг маълумотларингиз хавфсиз ва ҳимояланган',
       'verify_your_account': 'Ҳисобни тасдиқлаш',
-      'send_code_note': 'Биз сизнинг Телеграм ботингизга тасдиқлаш кодини юборамиз.',
+      'send_code_note':
+          'Биз сизнинг Телеграм ботингизга тасдиқлаш кодини юборамиз.',
       'what_happens_next': 'Қандай ишлайди?',
       'step_open_bot': 'Телеграм бот\nочилади',
       'step_press_start': 'Старт тугмасини\nбосинг',
@@ -3334,11 +3723,13 @@ class _AuthCardState extends State<_AuthCard> {
       'enter_code': 'Тасдиқлаш кодини киритинг',
       'enter_code_sent': 'Телеграм ботимиз юборган тасдиqlash кодини киритинг.',
       'code_expires': 'Коднинг амал қилиш вақти',
-      'not_received': 'Кодни олмадингизми? Ботни ишга туширганингизга ишонч ҳосил қилинг.',
+      'not_received':
+          'Кодни олмадингизми? Ботни ишга туширганингизга ишонч ҳосил қилинг.',
       'resend_code': 'Кодни qayta yuborish',
       'verify_continue': 'Тасдиқлаш ва давом этиш',
       'all_set': 'Ҳаммаси тайёр! 🎉',
-      'success_verified': 'Ҳисобингиз муваффақиятли тасдиқланди ва фаоллаштирилди.',
+      'success_verified':
+          'Ҳисобингиз муваффақиятли тасдиқланди ва фаоллаштирилди.',
       'acc_status': 'Ҳисоб ҳолати',
       'phone_num': 'Телефон рақам',
       'verified_at': 'Тасдиқланган вақт',
@@ -3369,9 +3760,13 @@ class _AuthCardState extends State<_AuthCard> {
                 height: 44,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: isDark ? const Color(0xFF2E243F) : const Color(0xFFF3E8FF),
+                  color: isDark
+                      ? const Color(0xFF2E243F)
+                      : const Color(0xFFF3E8FF),
                   border: Border.all(
-                    color: isDark ? const Color(0xFF3B2E58) : const Color(0xFFE9D5FF),
+                    color: isDark
+                        ? const Color(0xFF3B2E58)
+                        : const Color(0xFFE9D5FF),
                     width: 1,
                   ),
                 ),
@@ -3426,14 +3821,17 @@ class _AuthCardState extends State<_AuthCard> {
         alignment: Alignment.center,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: List.generate(4, (index) => Container(
-            width: 4,
-            height: 2,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(1),
+          children: List.generate(
+            4,
+            (index) => Container(
+              width: 4,
+              height: 2,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(1),
+              ),
             ),
-          )),
+          ),
         ),
       ),
     );
@@ -3551,7 +3949,15 @@ class _AuthCardState extends State<_AuthCard> {
         );
       }
     } on Object catch (error) {
-      _showError(error.toString().replaceFirst('Exception: ', ''));
+      final message = error.toString().replaceFirst('Exception: ', '');
+      if (message.toLowerCase().contains('akkaunt mavjud')) {
+        _showInfo(
+          'Bu telefon raqam ro‘yxatdan o‘tgan. Kirish oynasiga o‘tkazildi.',
+        );
+        widget.onModeChanged(false);
+      } else {
+        _showError(message);
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -3782,6 +4188,14 @@ class _AuthCardState extends State<_AuthCard> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isRegister = widget.isRegister;
     final step = _currentStep;
+    final compact = _isCompactStudentAuth(context);
+    final tiny = _isTinyStudentAuth(context);
+    final fieldGap = tiny ? 10.0 : (compact ? 12.0 : 14.0);
+    final sectionGap = tiny ? 12.0 : (compact ? 14.0 : 18.0);
+    final blockGap = tiny ? 14.0 : (compact ? 16.0 : 20.0);
+    final headerGap = isRegister
+        ? (tiny ? 6.0 : (compact ? 8.0 : 10.0))
+        : (tiny ? 10.0 : (compact ? 14.0 : 20.0));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3791,64 +4205,64 @@ class _AuthCardState extends State<_AuthCard> {
           children: [
             if (isRegister) ...[
               _StudentBackButton(onTap: _handleBackPress),
-              const SizedBox(width: 12),
+              SizedBox(width: compact ? 8 : 12),
             ],
-            Expanded(child: _StudentAuthLogo(compact: isRegister)),
-            const SizedBox(width: 12),
+            Expanded(child: _StudentAuthLogo(compact: isRegister || compact)),
+            SizedBox(width: compact ? 8 : 12),
             _StudentLanguageButton(
               language: widget.language,
               onChanged: widget.onLanguageChanged,
             ),
           ],
         ),
-        SizedBox(height: isRegister ? 10 : 20),
+        SizedBox(height: headerGap),
         if (isRegister) ...[
           _StudentStepper(
             step: step == 5 ? 3 : (step >= 2 ? 2 : 1),
             language: widget.language,
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: compact ? 6 : 10),
         ],
-        Text(
-          !isRegister
-              ? t('welcome')
-              : (step == 1
-                  ? t('create_account')
-                  : (step == 2
+        if (isRegister && step == 1) ...[
+          _StudentRegisterHero(language: widget.language),
+        ] else ...[
+          Text(
+            !isRegister
+                ? t('welcome')
+                : (step == 2
                       ? _getStepText('verification_required')
                       : (step == 3
-                          ? _getStepText('verify_your_account')
-                          : (step == 4
-                              ? _getStepText('enter_code')
-                              : _getStepText('all_set'))))),
-          style: TextStyle(
-            color: isDark ? Colors.white : const Color(0xFF0F172A),
-            fontSize: 23,
-            fontWeight: FontWeight.w900,
-            height: 1.15,
+                            ? _getStepText('verify_your_account')
+                            : (step == 4
+                                  ? _getStepText('enter_code')
+                                  : _getStepText('all_set')))),
+            style: TextStyle(
+              color: isDark ? Colors.white : const Color(0xFF0F172A),
+              fontSize: tiny ? 20 : (compact ? 21 : 23),
+              fontWeight: FontWeight.w900,
+              height: 1.15,
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          !isRegister
-              ? t('login_subtitle')
-              : (step == 1
-                  ? t('register_subtitle')
-                  : (step == 2
+          SizedBox(height: compact ? 4 : 6),
+          Text(
+            !isRegister
+                ? t('login_subtitle')
+                : (step == 2
                       ? _getStepText('telegram_secures')
                       : (step == 3
-                          ? _getStepText('send_code_note')
-                          : (step == 4
-                              ? _getStepText('enter_code_sent')
-                              : _getStepText('success_verified'))))),
-          style: TextStyle(
-            color: isDark ? const Color(0xFFD1D5DB) : const Color(0xFF475569),
-            fontSize: 13.5,
-            height: 1.4,
-            fontWeight: FontWeight.w500,
+                            ? _getStepText('send_code_note')
+                            : (step == 4
+                                  ? _getStepText('enter_code_sent')
+                                  : _getStepText('success_verified')))),
+            style: TextStyle(
+              color: isDark ? const Color(0xFFD1D5DB) : const Color(0xFF475569),
+              fontSize: tiny ? 12 : (compact ? 12.5 : 13.5),
+              height: 1.4,
+              fontWeight: FontWeight.w500,
+            ),
           ),
-        ),
-        const SizedBox(height: 14),
+          SizedBox(height: fieldGap),
+        ],
         if (isRegister && (step == 2 || step == 3)) ...[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
@@ -3907,7 +4321,9 @@ class _AuthCardState extends State<_AuthCard> {
                 number: 1,
                 content: Icon(
                   Icons.telegram_rounded,
-                  color: isDark ? const Color(0xFFA78BFA) : const Color(0xFF6D28D9),
+                  color: isDark
+                      ? const Color(0xFFA78BFA)
+                      : const Color(0xFF6D28D9),
                   size: 24,
                 ),
                 label: _getStepText('step_open_bot'),
@@ -3918,7 +4334,9 @@ class _AuthCardState extends State<_AuthCard> {
                 content: Text(
                   '/start',
                   style: TextStyle(
-                    color: isDark ? const Color(0xFFA78BFA) : const Color(0xFF6D28D9),
+                    color: isDark
+                        ? const Color(0xFFA78BFA)
+                        : const Color(0xFF6D28D9),
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
                     fontFamily: 'monospace',
@@ -3931,7 +4349,9 @@ class _AuthCardState extends State<_AuthCard> {
                 number: 3,
                 content: Icon(
                   Icons.phone_iphone_rounded,
-                  color: isDark ? const Color(0xFFA78BFA) : const Color(0xFF6D28D9),
+                  color: isDark
+                      ? const Color(0xFFA78BFA)
+                      : const Color(0xFF6D28D9),
                   size: 20,
                 ),
                 label: _getStepText('step_confirm_phone'),
@@ -3941,7 +4361,9 @@ class _AuthCardState extends State<_AuthCard> {
                 number: 4,
                 content: Icon(
                   Icons.lock_outline_rounded,
-                  color: isDark ? const Color(0xFFA78BFA) : const Color(0xFF6D28D9),
+                  color: isDark
+                      ? const Color(0xFFA78BFA)
+                      : const Color(0xFF6D28D9),
                   size: 20,
                 ),
                 label: _getStepText('step_enter_code'),
@@ -4003,7 +4425,9 @@ class _AuthCardState extends State<_AuthCard> {
             children: [
               Icon(
                 Icons.lock_outline_rounded,
-                color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
+                color: isDark
+                    ? const Color(0xFF64748B)
+                    : const Color(0xFF94A3B8),
                 size: 14,
               ),
               const SizedBox(width: 6),
@@ -4011,7 +4435,9 @@ class _AuthCardState extends State<_AuthCard> {
                 child: Text(
                   _getStepText('secure_data_note'),
                   style: TextStyle(
-                    color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
+                    color: isDark
+                        ? const Color(0xFF64748B)
+                        : const Color(0xFF94A3B8),
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -4029,12 +4455,12 @@ class _AuthCardState extends State<_AuthCard> {
                     icon: Icons.person_outline_rounded,
                     title: t('login_title'),
                   ),
-                  const SizedBox(height: 18),
+                  SizedBox(height: sectionGap),
                   _StudentPhoneInput(
                     label: t('phone'),
                     controller: _phoneController,
                   ),
-                  const SizedBox(height: 14),
+                  SizedBox(height: fieldGap),
                   _StudentAuthInput(
                     label: t('password'),
                     hintText: t('enter_password'),
@@ -4044,7 +4470,9 @@ class _AuthCardState extends State<_AuthCard> {
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => _submitLogin(),
                     suffix: IconButton(
-                      tooltip: _passwordVisible ? t('hide_password') : t('show_password'),
+                      tooltip: _passwordVisible
+                          ? t('hide_password')
+                          : t('show_password'),
                       onPressed: () {
                         setState(() => _passwordVisible = !_passwordVisible);
                       },
@@ -4056,7 +4484,7 @@ class _AuthCardState extends State<_AuthCard> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  SizedBox(height: fieldGap),
                   Row(
                     children: [
                       Checkbox(
@@ -4066,12 +4494,18 @@ class _AuthCardState extends State<_AuthCard> {
                         activeColor: const Color(0xFF7C3AED),
                         checkColor: Colors.white,
                         side: const BorderSide(color: Color(0xFF7B879F)),
+                        visualDensity: compact
+                            ? VisualDensity.compact
+                            : VisualDensity.standard,
                       ),
                       Expanded(
                         child: Text(
                           t('remember_me'),
                           style: TextStyle(
-                            color: isDark ? const Color(0xFFB7C0D6) : const Color(0xFF475569),
+                            color: isDark
+                                ? const Color(0xFFB7C0D6)
+                                : const Color(0xFF475569),
+                            fontSize: tiny ? 12 : (compact ? 12.5 : null),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -4080,21 +4514,22 @@ class _AuthCardState extends State<_AuthCard> {
                         onPressed: _openForgotPasswordSheet,
                         child: Text(
                           t('forgot'),
-                          style: const TextStyle(
-                            color: Color(0xFFA855F7),
+                          style: TextStyle(
+                            color: const Color(0xFFA855F7),
+                            fontSize: tiny ? 12 : (compact ? 12.5 : null),
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 20),
+                  SizedBox(height: blockGap),
                   _StudentGradientButton(
                     label: t('login'),
                     loading: _submitting,
                     onPressed: _submitLogin,
                   ),
-                  const SizedBox(height: 22),
+                  SizedBox(height: tiny ? 14 : (compact ? 16 : 22)),
                   _StudentAuthModeSwitch(
                     leading: t('no_account'),
                     action: t('create_account'),
@@ -4107,7 +4542,7 @@ class _AuthCardState extends State<_AuthCard> {
                       icon: Icons.account_circle_outlined,
                       title: t('your_info'),
                     ),
-                    const SizedBox(height: 18),
+                    SizedBox(height: sectionGap),
                     _StudentAuthInput(
                       label: t('first_name'),
                       hintText: t('first_name'),
@@ -4115,7 +4550,7 @@ class _AuthCardState extends State<_AuthCard> {
                       controller: _nameController,
                       textInputAction: TextInputAction.next,
                     ),
-                    const SizedBox(height: 14),
+                    SizedBox(height: fieldGap),
                     _StudentAuthInput(
                       label: t('last_name'),
                       hintText: t('last_name'),
@@ -4123,17 +4558,17 @@ class _AuthCardState extends State<_AuthCard> {
                       controller: _lastNameController,
                       textInputAction: TextInputAction.next,
                     ),
-                    const SizedBox(height: 14),
+                    SizedBox(height: fieldGap),
                     _StudentPhoneInput(
                       label: t('phone'),
                       controller: _phoneController,
                     ),
-                    const SizedBox(height: 14),
+                    SizedBox(height: fieldGap),
                     _StudentSectionTitle(
                       icon: Icons.lock_outline_rounded,
                       title: t('security'),
                     ),
-                    const SizedBox(height: 14),
+                    SizedBox(height: fieldGap),
                     _StudentAuthInput(
                       label: t('password'),
                       hintText: t('create_password'),
@@ -4141,8 +4576,11 @@ class _AuthCardState extends State<_AuthCard> {
                       controller: _passwordController,
                       obscureText: !_passwordVisible,
                       textInputAction: TextInputAction.next,
+                      onChanged: (_) => setState(() {}),
                       suffix: IconButton(
-                        tooltip: _passwordVisible ? t('hide_password') : t('show_password'),
+                        tooltip: _passwordVisible
+                            ? t('hide_password')
+                            : t('show_password'),
                         onPressed: () {
                           setState(() => _passwordVisible = !_passwordVisible);
                         },
@@ -4154,7 +4592,18 @@ class _AuthCardState extends State<_AuthCard> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      switchInCurve: Curves.easeOut,
+                      switchOutCurve: Curves.easeIn,
+                      child: _passwordController.text.isEmpty
+                          ? const SizedBox.shrink()
+                          : _PasswordStrengthMeter(
+                              password: _passwordController.text,
+                              language: widget.language,
+                            ),
+                    ),
+                    SizedBox(height: fieldGap),
                     _StudentAuthInput(
                       label: t('confirm_password'),
                       hintText: t('reenter_password'),
@@ -4163,9 +4612,14 @@ class _AuthCardState extends State<_AuthCard> {
                       obscureText: !_registerPasswordConfirmVisible,
                       textInputAction: TextInputAction.done,
                       suffix: IconButton(
-                        tooltip: _registerPasswordConfirmVisible ? t('hide_password') : t('show_password'),
+                        tooltip: _registerPasswordConfirmVisible
+                            ? t('hide_password')
+                            : t('show_password'),
                         onPressed: () {
-                          setState(() => _registerPasswordConfirmVisible = !_registerPasswordConfirmVisible);
+                          setState(
+                            () => _registerPasswordConfirmVisible =
+                                !_registerPasswordConfirmVisible,
+                          );
                         },
                         icon: Icon(
                           _registerPasswordConfirmVisible
@@ -4175,7 +4629,7 @@ class _AuthCardState extends State<_AuthCard> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    SizedBox(height: blockGap),
                     _StudentGradientButton(
                       label: t('create_account'),
                       loading: _submitting,
@@ -4210,7 +4664,9 @@ class _AuthCardState extends State<_AuthCard> {
                           Icon(
                             Icons.access_time_rounded,
                             size: 16,
-                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                            color: isDark
+                                ? const Color(0xFF94A3B8)
+                                : const Color(0xFF64748B),
                           ),
                           const SizedBox(width: 6),
                           Text(
@@ -4218,7 +4674,9 @@ class _AuthCardState extends State<_AuthCard> {
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                              color: isDark
+                                  ? const Color(0xFF94A3B8)
+                                  : const Color(0xFF64748B),
                             ),
                           ),
                         ],

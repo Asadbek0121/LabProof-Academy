@@ -33,6 +33,103 @@ function Badge({ variant, children, className }: { variant: "success" | "slate" 
   );
 }
 
+type VideoChapterDraft = {
+  id: string;
+  time: string;
+  title: string;
+};
+
+type VideoChapterPayload = {
+  time_seconds: number;
+  title: string;
+};
+
+const DEFAULT_VIDEO_CHAPTERS: Array<Omit<VideoChapterDraft, "id">> = [
+  { time: "00:00", title: "Kirish" },
+  { time: "00:36", title: "Klinik laboratoriya vazifalari" },
+  { time: "01:12", title: "Laboratoriya bo'limlari" },
+  { time: "01:48", title: "Laboratoriya xodimlari" },
+  { time: "02:24", title: "Xulosa" },
+];
+
+let chapterDraftCounter = 0;
+
+function createChapterDraft(input: Omit<VideoChapterDraft, "id">): VideoChapterDraft {
+  chapterDraftCounter += 1;
+  return {
+    id: `chapter-${Date.now()}-${chapterDraftCounter}`,
+    ...input,
+  };
+}
+
+function secondsToChapterTime(value: unknown) {
+  const secondsValue = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  const minutes = Math.floor(secondsValue / 60);
+  const seconds = secondsValue % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function parseChapterTime(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) return Math.max(0, Math.round(numeric));
+
+  const parts = trimmed.split(":").map((part) => Number(part.trim()));
+  if (parts.some((part) => !Number.isFinite(part))) return 0;
+
+  if (parts.length === 2) {
+    return Math.max(0, Math.round(parts[0] * 60 + parts[1]));
+  }
+
+  if (parts.length === 3) {
+    return Math.max(0, Math.round(parts[0] * 3600 + parts[1] * 60 + parts[2]));
+  }
+
+  return 0;
+}
+
+function normalizeChapterDrafts(value: unknown): VideoChapterDraft[] {
+  if (!Array.isArray(value)) {
+    return DEFAULT_VIDEO_CHAPTERS.map(createChapterDraft);
+  }
+
+  const chapters = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const title = String(record.title ?? record.label ?? "").trim();
+      if (!title) return null;
+      const seconds =
+        typeof record.time_seconds === "number"
+          ? record.time_seconds
+          : typeof record.seconds === "number"
+            ? record.seconds
+            : typeof record.start_seconds === "number"
+              ? record.start_seconds
+              : parseChapterTime(String(record.time ?? "0"));
+
+      return createChapterDraft({
+        time: secondsToChapterTime(seconds),
+        title,
+      });
+    })
+    .filter((chapter): chapter is VideoChapterDraft => chapter !== null);
+
+  return chapters.length > 0 ? chapters : DEFAULT_VIDEO_CHAPTERS.map(createChapterDraft);
+}
+
+function buildChapterPayload(chapters: VideoChapterDraft[]): VideoChapterPayload[] {
+  return chapters
+    .map((chapter) => ({
+      time_seconds: parseChapterTime(chapter.time),
+      title: chapter.title.trim(),
+    }))
+    .filter((chapter) => chapter.title.length > 0)
+    .sort((a, b) => a.time_seconds - b.time_seconds);
+}
+
 export function VideosPage() {
   const supabase = createClient();
   const { data: modules, isLoading: isModulesLoading } = useModules();
@@ -69,6 +166,7 @@ export function VideosPage() {
   const [category, setCategory] = useState("Nazarariy");
   const [difficulty, setDifficulty] = useState("Boshlang‘ich");
   const [tags, setTags] = useState("");
+  const [chapters, setChapters] = useState<VideoChapterDraft[]>(() => normalizeChapterDrafts(undefined));
 
   const { data: formTopics } = useTopics(formModuleId || undefined);
 
@@ -88,6 +186,7 @@ export function VideosPage() {
     setCategory("Nazarariy");
     setDifficulty("Boshlang‘ich");
     setTags("");
+    setChapters(normalizeChapterDrafts(undefined));
     setOrderIndex((lessons?.filter((l: any) => l.kind === "video").length || 0) + 1);
     setStep(1);
     setModalOpen(true);
@@ -108,6 +207,7 @@ export function VideosPage() {
     setFileUrl(lesson.file_url || "");
     setDurationMinutes(Math.round((lesson.duration_seconds || 0) / 60));
     setOrderIndex(lesson.order_index || 1);
+    setChapters(normalizeChapterDrafts(lesson.chapters));
     setStep(1);
     setModalOpen(true);
   };
@@ -134,6 +234,7 @@ export function VideosPage() {
       body: description || null,
       file_url: fileUrl,
       duration_seconds: Number(durationMinutes) * 60,
+      chapters: buildChapterPayload(chapters),
       order_index: Number(orderIndex),
     };
 
@@ -202,6 +303,7 @@ export function VideosPage() {
 
   const selectedTopic = topics?.find((t: any) => t.id === filterTopicId);
   const topicTitle = selectedTopic ? selectedTopic.title : "Barcha mavzular";
+  const chapterPreview = useMemo(() => buildChapterPayload(chapters), [chapters]);
 
   // Function to extract youtube id for thumbnail preview
   const getYoutubeVideoId = (url: string) => {
@@ -209,6 +311,28 @@ export function VideosPage() {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
+  };
+
+  const addChapter = () => {
+    setChapters((previous) => {
+      const sorted = buildChapterPayload(previous);
+      const last = sorted[sorted.length - 1];
+      return [
+        ...previous,
+        createChapterDraft({
+          time: secondsToChapterTime((last?.time_seconds ?? 0) + 60),
+          title: "",
+        }),
+      ];
+    });
+  };
+
+  const updateChapter = (id: string, key: "time" | "title", value: string) => {
+    setChapters((previous) => previous.map((chapter) => (chapter.id === id ? { ...chapter, [key]: value } : chapter)));
+  };
+
+  const removeChapter = (id: string) => {
+    setChapters((previous) => (previous.length <= 1 ? previous : previous.filter((chapter) => chapter.id !== id)));
   };
 
   return (
@@ -225,20 +349,20 @@ export function VideosPage() {
           </h1>
         </div>
         
-        <Button onClick={() => openCreateModal()} className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-full px-6 h-11 transition-all hover:scale-105 active:scale-95">
+        <Button onClick={() => openCreateModal()} className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-lg px-5 h-11 transition-all ">
           <Plus className="size-5" />
           Yangi Video
         </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6 mb-8">
-        <div className="md:col-span-4 lg:col-span-4 bg-white/80 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-5 flex flex-col justify-center gap-4">
+        <div className="md:col-span-4 lg:col-span-4 bg-white border border-slate-200 shadow-sm rounded-lg p-5 flex flex-col justify-center gap-4">
           <div className="space-y-2">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Modulni tanlang</p>
             <Select 
               value={filterModuleId} 
               onChange={(e) => setFilterModuleId(e.target.value)}
-              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-xl font-bold text-slate-700"
+              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-lg font-bold text-slate-700"
             >
               <option value="">Barcha Modullar</option>
               {modules?.map((m: any) => <option key={m.id} value={m.id}>{m.title}</option>)}
@@ -250,7 +374,7 @@ export function VideosPage() {
               value={filterTopicId} 
               onChange={(e) => setFilterTopicId(e.target.value)}
               disabled={!filterModuleId || isTopicsLoading}
-              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-xl font-bold text-slate-700 disabled:opacity-50"
+              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-lg font-bold text-slate-700 disabled:opacity-50"
             >
               <option value="">Barcha Mavzular</option>
               {topics?.map((t: any) => <option key={t.id} value={t.id}>{t.title}</option>)}
@@ -259,22 +383,22 @@ export function VideosPage() {
         </div>
 
         <div className="md:col-span-8 lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mb-2"><Video className="size-5" /></div>
             <p className="text-2xl font-black text-slate-900">{stats.total}</p>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-1">Jami Videolar</p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center mb-2"><Play className="size-5 ml-1" /></div>
             <p className="text-2xl font-black text-slate-900">{stats.youtube}</p>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-1">YouTube</p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2"><UploadCloud className="size-5" /></div>
             <p className="text-2xl font-black text-slate-900">{stats.uploaded}</p>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-1">Yuklangan</p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2"><Clock className="size-5" /></div>
             <p className="text-2xl font-black text-slate-900">{stats.totalDuration}</p>
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mt-1">Umumiy Vaqt</p>
@@ -282,18 +406,18 @@ export function VideosPage() {
         </div>
       </div>
 
-      <div className="bg-white/80 backdrop-blur-xl border border-white shadow-sm rounded-2xl p-3 flex flex-wrap items-center gap-3 mb-8">
+      <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-3 flex flex-wrap items-center gap-3 mb-8">
         <div className="relative flex-1 min-w-[250px]">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-slate-400" />
           <Input 
             placeholder="Videolarni izlash..." 
-            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 rounded-xl transition-all"
+            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 rounded-lg transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
         <div className="h-8 w-px bg-slate-200 hidden md:block"></div>
-        <Select value={videoTypeFilter} onChange={(e: any) => setVideoTypeFilter(e.target.value)} className="h-12 w-full md:w-[180px] bg-slate-50/50 border-transparent rounded-xl font-medium text-slate-700">
+        <Select value={videoTypeFilter} onChange={(e: any) => setVideoTypeFilter(e.target.value)} className="h-12 w-full md:w-[180px] bg-slate-50/50 border-transparent rounded-lg font-medium text-slate-700">
           <option value="all">Barcha Turlar</option>
           <option value="youtube">Faqat YouTube</option>
           <option value="uploaded">Faqat Yuklangan</option>
@@ -302,13 +426,13 @@ export function VideosPage() {
 
       {/* Premium Table View */}
       {isLessonsLoading ? (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 flex flex-col gap-4">
-            {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full rounded-2xl" />)}
+            {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
           </div>
         </Card>
       ) : !filteredVideos.length ? (
-        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white/50 backdrop-blur-sm rounded-3xl border border-white border-dashed">
+        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white rounded-lg border border-dashed border-slate-200">
           <div className="size-24 bg-blue-50 rounded-full flex items-center justify-center mb-6">
             <Video className="size-10 text-blue-500" />
           </div>
@@ -316,12 +440,12 @@ export function VideosPage() {
           <p className="text-slate-500 text-center max-w-md mb-8">
             Bu mavzu uchun hali hech qanday video dars qo'shilmagan.
           </p>
-          <Button onClick={() => openCreateModal()} className="rounded-full px-8 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide">
+          <Button onClick={() => openCreateModal()} className="rounded-lg px-6 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide">
             <Plus className="size-5 mr-2" /> Birinchi Videoni Qo'shish
           </Button>
         </div>
       ) : (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden bg-white/80 backdrop-blur-xl animate-in fade-in-50 duration-200">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden bg-white animate-in fade-in-50 duration-200">
           <div className="overflow-x-auto edulab-scrollbar">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-[10px] font-black uppercase text-slate-400 tracking-wider border-b border-slate-100">
@@ -347,7 +471,7 @@ export function VideosPage() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-4">
-                          <div className="relative w-20 h-12 rounded-xl overflow-hidden shrink-0 shadow-sm border border-slate-100 bg-slate-900 flex items-center justify-center group-hover:shadow-md transition-all">
+                          <div className="relative w-20 h-12 rounded-lg overflow-hidden shrink-0 shadow-sm border border-slate-100 bg-slate-900 flex items-center justify-center group-hover:shadow-md transition-all">
                             {thumbUrl ? (
                               <img src={thumbUrl} alt={video.title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
                             ) : (
@@ -386,7 +510,7 @@ export function VideosPage() {
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="size-9 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                            className="size-9 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
                             onClick={() => window.open(video.file_url, '_blank')}
                           >
                             <Eye className="size-4.5" />
@@ -395,7 +519,7 @@ export function VideosPage() {
                             onClick={() => openEditModal(video)} 
                             variant="ghost" 
                             size="icon" 
-                            className="size-9 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                            className="size-9 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"
                           >
                             <Pencil className="size-4.5" />
                           </Button>
@@ -403,7 +527,7 @@ export function VideosPage() {
                             onClick={() => setDeleteConfirm({ open: true, id: video.id })} 
                             variant="ghost" 
                             size="icon" 
-                            className="size-9 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50"
+                            className="size-9 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
                           >
                             <Trash2 className="size-4.5" />
                           </Button>
@@ -469,7 +593,7 @@ export function VideosPage() {
                             setFormModuleId(e.target.value);
                             setFormTopicId("");
                           }}
-                          className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700"
+                          className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700"
                         >
                           <option value="" disabled>Modulni tanlang</option>
                           {modules?.map((m: any) => (
@@ -484,7 +608,7 @@ export function VideosPage() {
                           value={formTopicId} 
                           onChange={(e) => setFormTopicId(e.target.value)}
                           disabled={!formModuleId}
-                          className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700 disabled:opacity-50"
+                          className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700 disabled:opacity-50"
                         >
                           <option value="" disabled>Avval modulni tanlang</option>
                           {formTopics?.map((t: any) => (
@@ -499,7 +623,7 @@ export function VideosPage() {
                           placeholder="Masalan: Flexbox bilan ishlash asoslari"
                           value={title}
                           onChange={(e) => setTitle(e.target.value)}
-                          className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-medium transition-all"
+                          className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-medium transition-all"
                           autoFocus
                         />
                       </div>
@@ -510,7 +634,7 @@ export function VideosPage() {
                           placeholder="Ushbu videoda nimalar o'rgatiladi?"
                           value={description}
                           onChange={(e) => setDescription(e.target.value)}
-                          className="h-24 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 py-4 text-base font-medium transition-all resize-none"
+                          className="h-24 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 py-4 text-base font-medium transition-all resize-none"
                         />
                       </div>
                     </div>
@@ -525,7 +649,7 @@ export function VideosPage() {
                           <button
                             type="button"
                             onClick={() => setVideoKind("youtube")}
-                            className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${videoKind === "youtube" ? 'bg-red-50 border-red-200 text-red-600 scale-[1.02] shadow-sm' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50'}`}
+                            className={`flex flex-col items-center justify-center p-5 rounded-lg border-2 transition-all ${videoKind === "youtube" ? 'bg-red-50 border-red-200 text-red-600 scale-[1.02] shadow-sm' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50'}`}
                           >
                             <Play className="size-8 mb-3" />
                             <span className="text-xs font-black uppercase tracking-wider">YouTube</span>
@@ -533,7 +657,7 @@ export function VideosPage() {
                           <button
                             type="button"
                             onClick={() => setVideoKind("uploaded")}
-                            className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${videoKind === "uploaded" ? 'bg-blue-50 border-blue-200 text-blue-600 scale-[1.02] shadow-sm' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50'}`}
+                            className={`flex flex-col items-center justify-center p-5 rounded-lg border-2 transition-all ${videoKind === "uploaded" ? 'bg-blue-50 border-blue-200 text-blue-600 scale-[1.02] shadow-sm' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50'}`}
                           >
                             <UploadCloud className="size-8 mb-3" />
                             <span className="text-xs font-black uppercase tracking-wider">Boshqa URL</span>
@@ -551,12 +675,12 @@ export function VideosPage() {
                             placeholder={videoKind === "youtube" ? "https://youtube.com/watch?v=..." : "https://.../video.mp4"}
                             value={fileUrl}
                             onChange={(e) => setFileUrl(e.target.value)}
-                            className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 pl-12 text-base font-medium transition-all"
+                            className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 pl-12 text-base font-medium transition-all"
                           />
                         </div>
                         {videoKind === "youtube" && fileUrl && getYoutubeVideoId(fileUrl) && (
-                           <div className="mt-4 p-2 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-4">
-                             <img src={`https://img.youtube.com/vi/${getYoutubeVideoId(fileUrl)}/default.jpg`} className="w-24 h-16 rounded-xl object-cover" alt="Thumb" />
+                           <div className="mt-4 p-2 bg-slate-50 rounded-lg border border-slate-100 flex items-center gap-4">
+                             <img src={`https://img.youtube.com/vi/${getYoutubeVideoId(fileUrl)}/default.jpg`} className="w-24 h-16 rounded-lg object-cover" alt="Thumb" />
                              <p className="text-xs font-bold text-emerald-600 flex items-center gap-1"><CheckCircle2 className="size-4" /> Video topildi</p>
                            </div>
                         )}
@@ -571,17 +695,65 @@ export function VideosPage() {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
                           <label className="text-sm font-bold text-slate-800">Tartib raqami</label>
-                          <Input type="number" value={orderIndex} onChange={(e) => setOrderIndex(Number(e.target.value))} min={1} className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold" />
+                          <Input type="number" value={orderIndex} onChange={(e) => setOrderIndex(Number(e.target.value))} min={1} className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold" />
                         </div>
                         <div className="grid gap-2">
                           <label className="text-sm font-bold text-slate-800">Video davomiyligi (Daqiqada)</label>
-                          <Input type="number" value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))} min={1} className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold" />
+                          <Input type="number" value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))} min={1} className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold" />
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <label className="text-sm font-black text-slate-900">Video bo'limlari</label>
+                            <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-500">
+                              Student appda video ostida chiqadigan vaqtlar. Masalan: 00:36 - Klinik laboratoriya vazifalari.
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={addChapter}
+                            className="h-9 rounded-lg border-blue-200 bg-white text-blue-600 hover:bg-blue-50"
+                          >
+                            <Plus className="mr-1 size-4" />
+                            Qo'shish
+                          </Button>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                          {chapters.map((chapter, index) => (
+                            <div key={chapter.id} className="grid grid-cols-1 gap-2 sm:grid-cols-[92px_1fr_40px]">
+                              <Input
+                                value={chapter.time}
+                                onChange={(e) => updateChapter(chapter.id, "time", e.target.value)}
+                                placeholder="00:00"
+                                className="h-11 rounded-lg border-blue-100 bg-white font-black text-blue-600"
+                              />
+                              <Input
+                                value={chapter.title}
+                                onChange={(e) => updateChapter(chapter.id, "title", e.target.value)}
+                                placeholder={index === 0 ? "Kirish" : "Bo'lim nomi"}
+                                className="h-11 rounded-lg border-blue-100 bg-white font-semibold"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeChapter(chapter.id)}
+                                disabled={chapters.length === 1}
+                                className="h-11 w-11 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
+                          ))}
                         </div>
                       </div>
 
                       <div className="grid gap-2">
                         <label className="text-sm font-bold text-slate-800">Dars Turini Tanlang</label>
-                        <Select value={category} onChange={(e) => setCategory(e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700">
+                        <Select value={category} onChange={(e) => setCategory(e.target.value)} className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700">
                           <option value="Nazarariy">Nazarariy Dars</option>
                           <option value="Amaliy">Amaliy Mashg'ulot</option>
                           <option value="Mustaqil">Mustaqil Ish</option>
@@ -590,7 +762,7 @@ export function VideosPage() {
 
                       <div className="grid gap-2">
                         <label className="text-sm font-bold text-slate-800">Daraja</label>
-                        <Select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700">
+                        <Select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700">
                           <option value="Boshlang‘ich">Boshlang‘ich</option>
                           <option value="O‘rta">O‘rta</option>
                           <option value="Murakkab">Murakkab</option>
@@ -621,7 +793,7 @@ export function VideosPage() {
                   }} className="text-slate-500 font-bold hover:bg-slate-100 rounded-full px-6 h-12">
                     {step > 1 ? "Ortga" : "Bekor qilish"}
                   </Button>
-                  <Button onClick={() => setStep(s => s + 1)} className="rounded-full px-8 h-12 font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20">
+                  <Button onClick={() => setStep(s => s + 1)} className="rounded-lg px-6 h-12 font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20">
                     Keyingisi <ArrowRight className="size-4 ml-2" />
                   </Button>
                 </div>
@@ -633,7 +805,7 @@ export function VideosPage() {
               <div className="absolute inset-0 bg-gradient-to-br from-blue-900/30 via-slate-900 to-black z-0"></div>
               
               <div className="relative z-10 w-full px-12 flex flex-col items-center">
-                <div className="w-full bg-black/40 border border-white/10 rounded-[2rem] shadow-2xl overflow-hidden backdrop-blur-xl">
+                <div className="w-full bg-black/40 border border-white/10 rounded-lg shadow-xl overflow-hidden ">
                   {/* Fake Video Player */}
                   <div className="aspect-video bg-black relative flex items-center justify-center group cursor-pointer">
                     {videoKind === "youtube" && getYoutubeVideoId(fileUrl) ? (
@@ -664,16 +836,30 @@ export function VideosPage() {
                       {description || "Talabalarga bu video dars nima haqida ekanligini ko'rsatish uchun ta'rif yozing."}
                     </p>
                     
-                    <div className="mt-6 flex items-center justify-between text-xs font-bold text-slate-500">
-                      <div className="flex items-center gap-2">
-                        <Clock className="size-4" />
-                        <span>{durationMinutes} daqiqa</span>
-                      </div>
+                      <div className="mt-6 flex items-center justify-between text-xs font-bold text-slate-500">
+                        <div className="flex items-center gap-2">
+                          <Clock className="size-4" />
+                          <span>{durationMinutes} daqiqa</span>
+                        </div>
                       <div className="flex items-center gap-2">
                         <div className="size-6 rounded-full bg-white/10 flex items-center justify-center"><BookOpen className="size-3" /></div>
                         Mavzu #{orderIndex}
                       </div>
                     </div>
+
+                    {chapterPreview.length > 0 && (
+                      <div className="border-t border-white/10 bg-white/[0.03] p-5">
+                        <p className="mb-3 text-[10px] font-black uppercase tracking-wider text-blue-200">Video bo'limlari</p>
+                        <div className="space-y-2">
+                          {chapterPreview.slice(0, 5).map((chapter) => (
+                            <div key={`${chapter.time_seconds}-${chapter.title}`} className="flex items-start gap-3 text-xs">
+                              <span className="w-12 shrink-0 font-black text-blue-300">{secondsToChapterTime(chapter.time_seconds)}</span>
+                              <span className="line-clamp-1 font-semibold text-slate-300">{chapter.title}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { LOCAL_ADMIN_SESSION_COOKIE, verifyLocalAdminSession } from "@/lib/admin-local-session";
 
 type SupabaseCookie = {
   name: string;
@@ -31,6 +32,12 @@ const protectedPrefixes = [
 ];
 
 export async function middleware(request: NextRequest) {
+  const isProtected = protectedPrefixes.some((prefix) =>
+    request.nextUrl.pathname.startsWith(prefix),
+  );
+  const hasLocalAdminSession = await verifyLocalAdminSession(
+    request.cookies.get(LOCAL_ADMIN_SESSION_COOKIE)?.value,
+  );
   const hasEnv =
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -38,6 +45,12 @@ export async function middleware(request: NextRequest) {
   console.log("Middleware request:", request.nextUrl.pathname, "hasEnv:", !!hasEnv);
 
   if (!hasEnv) {
+    if (isProtected && !hasLocalAdminSession) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("next", request.nextUrl.pathname);
+      return NextResponse.redirect(url);
+    }
     return NextResponse.next();
   }
 
@@ -66,18 +79,14 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isProtected = protectedPrefixes.some((prefix) =>
-    request.nextUrl.pathname.startsWith(prefix),
-  );
-
-  if (isProtected && !user) {
+  if (isProtected && !user && !hasLocalAdminSession) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", request.nextUrl.pathname);
     return NextResponse.redirect(url);
   }
 
-  if (isProtected && user) {
+  if (isProtected && user && !hasLocalAdminSession) {
     const { data: profile } = await supabase
       .from("profiles")
       .select("role")

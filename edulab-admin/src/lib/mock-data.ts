@@ -336,14 +336,10 @@ export const settingSections: Array<{
 }> = [
   { id: "general", title: "Umumiy sozlamalar", subtitle: "Asosiy tizim parametrlari", icon: ShieldCheck },
   { id: "system", title: "Tizim ma'lumotlari", subtitle: "Versiya va server holati", icon: Activity },
-  { id: "localization", title: "Til va lokalizatsiya", subtitle: "Tizim tili va formatlar", icon: MessageCircle },
   { id: "backup", title: "Zaxira nusxa", subtitle: "Backup va tiklash", icon: UploadCloud },
   { id: "security", title: "Xavfsizlik", subtitle: "Xavfsizlik va sessiyalar", icon: ShieldCheck },
-  { id: "email", title: "Email sozlamalari", subtitle: "SMTP va xabar jo'natish", icon: Bell },
   { id: "payments", title: "To'lov sozlamalari", subtitle: "To'lov tizimlari va valyuta", icon: Award },
   { id: "integrations", title: "Integratsiyalar", subtitle: "Uchinchi tomon servislar", icon: GalleryVerticalEnd },
-  { id: "notifications", title: "Bildirishnomalar", subtitle: "Tizim bildirishnomalari", icon: Bell },
-  { id: "files", title: "Fayl sozlamalari", subtitle: "Fayl yuklash va cheklovlar", icon: ImageIcon },
 ];
 
 export const chartSeries = [

@@ -4,6 +4,14 @@ import type { MediaKind } from "@/lib/types";
 
 let configured = false;
 
+export function hasCloudinaryEnv() {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET,
+  );
+}
+
 export function getCloudinary() {
   if (!configured) {
     cloudinary.config({

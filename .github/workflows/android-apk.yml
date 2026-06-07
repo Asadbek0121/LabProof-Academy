@@ -38,7 +38,15 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release
+        run: |
+          VERSION_LINE="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          VERSION_NAME="${VERSION_LINE%%+*}"
+          VERSION_CODE="${VERSION_LINE#*+}"
+          flutter build apk --release \
+            --build-name "$VERSION_NAME" \
+            --build-number "$VERSION_CODE" \
+            --dart-define APP_VERSION_NAME="$VERSION_NAME" \
+            --dart-define APP_VERSION_CODE="$VERSION_CODE"
 
       - name: Prepare download artifact
         run: |

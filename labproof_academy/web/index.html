@@ -19,6 +19,9 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="LabProof Academy laboratory learning management system.">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -36,18 +39,41 @@
   <script>
     const host = window.location.hostname;
     const isLocalPreviewHost =
-      host === '127.0.0.1' || host === 'localhost' || host === '::1';
+      host === '127.0.0.1' ||
+      host === 'localhost' ||
+      host === '::1' ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+    const bootVersion = isLocalPreviewHost ? Date.now().toString() : '1';
+
     if (isLocalPreviewHost && 'serviceWorker' in navigator) {
       navigator.serviceWorker
         .getRegistrations()
         .then((registrations) => {
-          for (const registration of registrations) {
-            registration.unregister();
-          }
+          if (!registrations.length) return;
+          Promise.all(registrations.map((registration) => registration.unregister()))
+            .then(() => {
+              if (!sessionStorage.getItem('labproof_local_sw_reset')) {
+                sessionStorage.setItem('labproof_local_sw_reset', '1');
+                window.location.reload();
+              }
+            });
         })
         .catch(() => {});
     }
+
+    if (isLocalPreviewHost && 'caches' in window) {
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        .catch(() => {});
+    }
+
+    const flutterBootstrap = document.createElement('script');
+    flutterBootstrap.src = `flutter_bootstrap.js?v=${bootVersion}`;
+    flutterBootstrap.async = true;
+    document.body.appendChild(flutterBootstrap);
   </script>
-  <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

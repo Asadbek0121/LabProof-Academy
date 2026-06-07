@@ -12,13 +12,11 @@ import '../../data/repositories/supabase_academy_repository.dart';
 class TwitterStyleCommunity extends StatefulWidget {
   const TwitterStyleCommunity({
     required this.data,
-    required this.onRefresh,
     required this.notificationCount,
     required this.onNotifications,
   });
 
   final StudentDashboardData data;
-  final Future<void> Function() onRefresh;
   final int notificationCount;
   final VoidCallback onNotifications;
 
@@ -69,56 +67,50 @@ class _TwitterStyleCommunityState extends State<TwitterStyleCommunity> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => _CreateTweetDialog(
+        onUploadAttachments: _uploadCommunityAttachments,
         onTweetCreated: (content, attachments) async {
-          final localPost = _createLocalPost(content, attachments);
-          if (mounted) {
-            setState(() {
-              _posts = [localPost, ..._posts];
-              _isLoading = false;
-            });
-            Navigator.pop(sheetContext);
-            _showMessage('Post qo‘shildi!');
-          }
+          try {
+            final createdPost = await _repository.createTwitterPost(
+              content: content,
+              attachments: attachments,
+            );
+            if (!mounted) return;
 
-          unawaited(
-            _repository
-                .createTwitterPost(content: content, attachments: attachments)
-                .then((_) {
-                  if (mounted) _loadPosts();
-                })
-                .catchError((_) {
-                  if (mounted) {
-                    _showMessage('Post hozircha lokal ko‘rinishda saqlandi.');
-                  }
-                }),
-          );
+            if (mounted) {
+              setState(() {
+                _posts = [createdPost, ..._posts];
+                _isLoading = false;
+              });
+              if (sheetContext.mounted) Navigator.pop(sheetContext);
+              _showMessage('Post Supabase’da saqlandi.');
+            }
+            unawaited(_loadPosts());
+          } catch (_) {
+            if (mounted) {
+              _showMessage(
+                'Post saqlanmadi. Internet yoki Supabase ruxsatlarini tekshiring.',
+              );
+            }
+            rethrow;
+          }
         },
       ),
     );
   }
 
-  CommunityPost _createLocalPost(String content, List<String> attachments) {
-    final profile = widget.data.profile;
-    return CommunityPost(
-      id: 'local-${DateTime.now().microsecondsSinceEpoch}',
-      authorId: profile.id,
-      authorName: profile.fullName.trim().isEmpty
-          ? 'Student'
-          : profile.fullName.trim(),
-      authorAvatar: profile.avatarUrl,
-      authorBadge: 'Student',
-      content: content,
-      likes: 0,
-      dislikes: 0,
-      reposts: 0,
-      replies: 0,
-      isLiked: false,
-      isDisliked: false,
-      isReposted: false,
-      isBookmarked: false,
-      createdAt: DateTime.now(),
-      attachments: attachments,
-    );
+  Future<List<String>> _uploadCommunityAttachments(
+    List<_PendingAttachment> attachments,
+  ) async {
+    final urls = <String>[];
+    for (final attachment in attachments) {
+      final url = await _repository.uploadCommunityImage(
+        bytes: attachment.bytes,
+        extension: attachment.extension,
+        fileName: attachment.name,
+      );
+      urls.add(url);
+    }
+    return urls;
   }
 
   @override
@@ -156,12 +148,6 @@ class _TwitterStyleCommunityState extends State<TwitterStyleCommunity> {
                 ],
               ),
             ),
-            _CircleIconButton(
-              tooltip: 'Yangilash',
-              onPressed: _loadPosts,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-            const SizedBox(width: 16),
             Badge.count(
               isLabelVisible: widget.notificationCount > 0,
               count: widget.notificationCount,
@@ -445,15 +431,15 @@ class _TwitterStyleCommunityState extends State<TwitterStyleCommunity> {
   }
 
   void _showPostOptions(CommunityPost post) {
-    final isOwnPost =
-        post.authorId == widget.data.profile.id || post.id.startsWith('local-');
+    final isOwnPost = post.authorId == widget.data.profile.id;
+    final isAdmin = widget.data.profile.role == UserRole.admin;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => _PostOptionsSheet(
         post: post,
         canEdit: isOwnPost,
-        canDelete: isOwnPost,
+        canDelete: isOwnPost || isAdmin,
         onEdit: () => unawaited(_handleEditPost(post)),
         onDelete: () => unawaited(_handleDeletePost(post)),
         onShare: () => unawaited(_handleShare(post)),
@@ -938,30 +924,24 @@ class _TweetCard extends StatelessWidget {
                     padding: EdgeInsets.only(
                       right: index < post.attachments.length - 1 ? 8 : 0,
                     ),
-                    child: Container(
-                      width: 100,
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? Colors.grey.shade800
-                            : Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.image,
-                              color: AppColors.studentPrimary,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              post.attachments.length > 1
-                                  ? '+${post.attachments.length}'
-                                  : '',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ],
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        width: 120,
+                        height: 100,
+                        child: Image.network(
+                          post.attachments[index],
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
+                                color: isDark
+                                    ? Colors.grey.shade800
+                                    : Colors.grey.shade200,
+                                child: const Icon(
+                                  Icons.broken_image_outlined,
+                                  color: AppColors.studentPrimary,
+                                ),
+                              ),
                         ),
                       ),
                     ),
@@ -1265,10 +1245,28 @@ class _PostOptionTile extends StatelessWidget {
   }
 }
 
-class _CreateTweetDialog extends StatefulWidget {
-  const _CreateTweetDialog({required this.onTweetCreated});
+class _PendingAttachment {
+  const _PendingAttachment({
+    required this.name,
+    required this.extension,
+    required this.bytes,
+  });
 
-  final Function(String content, List<String> attachments) onTweetCreated;
+  final String name;
+  final String extension;
+  final Uint8List bytes;
+}
+
+class _CreateTweetDialog extends StatefulWidget {
+  const _CreateTweetDialog({
+    required this.onTweetCreated,
+    required this.onUploadAttachments,
+  });
+
+  final Future<void> Function(String content, List<String> attachments)
+  onTweetCreated;
+  final Future<List<String>> Function(List<_PendingAttachment> attachments)
+  onUploadAttachments;
 
   @override
   State<_CreateTweetDialog> createState() => _CreateTweetDialogState();
@@ -1295,7 +1293,7 @@ class _CreateTweetDialogState extends State<_CreateTweetDialog> {
     TextEditingController(),
     TextEditingController(),
   ];
-  List<String> _attachments = [];
+  final List<_PendingAttachment> _attachments = [];
   bool _isPollEnabled = false;
   bool _isSubmitting = false;
   String _draftText = '';
@@ -1314,16 +1312,36 @@ class _CreateTweetDialogState extends State<_CreateTweetDialog> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: true,
+        withData: true,
       );
       if (result != null) {
+        final picked = result.files
+            .where((file) => file.bytes != null)
+            .map(
+              (file) => _PendingAttachment(
+                name: file.name,
+                extension: (file.extension ?? 'jpg').toLowerCase().replaceAll(
+                  '.',
+                  '',
+                ),
+                bytes: file.bytes!,
+              ),
+            )
+            .toList(growable: false);
         setState(() {
-          _attachments.addAll(
-            result.files.map((file) => file.path ?? file.name),
-          );
+          _attachments.addAll(picked);
         });
+        if (picked.length != result.files.length && mounted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(content: Text('Ba’zi rasmlar yuklanmadi.')),
+          );
+        }
       }
     } catch (e) {
-      // Handle error
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(const SnackBar(content: Text('Rasm tanlanmadi.')));
     }
   }
 
@@ -1466,12 +1484,16 @@ class _CreateTweetDialogState extends State<_CreateTweetDialog> {
   }
 
   Future<void> _submit() async {
-    final content = _composedContent();
-    if (_isSubmitting || content.isEmpty) return;
+    final rawContent = _composedContent();
+    if (_isSubmitting || (rawContent.isEmpty && _attachments.isEmpty)) return;
+    final content = rawContent.isEmpty ? 'Rasmli post' : rawContent;
 
     setState(() => _isSubmitting = true);
     try {
-      await widget.onTweetCreated(content, _attachments);
+      final uploadedAttachments = await widget.onUploadAttachments(
+        _attachments,
+      );
+      await widget.onTweetCreated(content, uploadedAttachments);
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -1508,18 +1530,6 @@ class _CreateTweetDialogState extends State<_CreateTweetDialog> {
                 ),
               ),
               title: const Text('Yangi post'),
-              actions: [
-                TextButton(
-                  onPressed: _isSubmitting ? null : _submit,
-                  child: _isSubmitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Yuborish'),
-                ),
-              ],
             ),
             ConstrainedBox(
               constraints: BoxConstraints(
@@ -1715,6 +1725,11 @@ class _CreateTweetDialogState extends State<_CreateTweetDialog> {
                                       border: Border.all(
                                         color: Colors.grey.shade300,
                                       ),
+                                    ),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: Image.memory(
+                                      _attachments[index].bytes,
+                                      fit: BoxFit.cover,
                                     ),
                                   ),
                                   Positioned(
@@ -2259,30 +2274,36 @@ class _EmptyState extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.all(32),
-      child: Column(
-        children: [
-          Icon(
-            icon,
-            size: 48,
-            color: isDark ? Colors.grey.shade700 : Colors.grey.shade300,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: isDark ? Colors.white : Colors.black,
+      child: SizedBox(
+        width: double.infinity,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 48,
+              color: isDark ? Colors.grey.shade700 : Colors.grey.shade300,
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            message,
-            style: TextStyle(
-              color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : Colors.black,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

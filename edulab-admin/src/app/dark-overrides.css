@@ -1,0 +1,60 @@
+html.dark body [class~="bg-white"] {
+  background-color: rgb(15 23 42) !important;
+}
+
+html.dark body [class~="bg-slate-50"],
+html.dark body [class~="bg-slate-50/80"],
+html.dark body [class~="bg-slate-50/70"],
+html.dark body [class~="bg-slate-50/60"],
+html.dark body [class~="bg-slate-50/50"],
+html.dark body [class~="bg-slate-50/40"],
+html.dark body [class~="bg-slate-50/30"],
+html.dark body [class~="bg-slate-50/20"],
+html.dark body [class~="bg-slate-50/10"],
+html.dark body [class~="bg-slate-100"],
+html.dark body [class~="bg-slate-100/50"] {
+  background-color: rgb(30 41 59 / 0.55) !important;
+}
+
+html.dark body :is(input, select, textarea)[class*="bg-slate-50"],
+html.dark body :is(input, select, textarea)[class*="bg-white"] {
+  background-color: rgb(2 6 23 / 0.55) !important;
+  color: rgb(241 245 249) !important;
+}
+
+html.dark body [class~="border-slate-100"],
+html.dark body [class~="border-slate-150"],
+html.dark body [class~="border-slate-150/50"],
+html.dark body [class~="border-slate-200"],
+html.dark body [class~="border-slate-200/50"],
+html.dark body [class~="border-border"] {
+  border-color: rgb(30 41 59) !important;
+}
+
+html.dark body [class~="divide-slate-50"] > :not([hidden]) ~ :not([hidden]),
+html.dark body [class~="divide-slate-100"] > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(30 41 59) !important;
+}
+
+html.dark body [class~="text-slate-950"],
+html.dark body [class~="text-slate-900"],
+html.dark body [class~="text-slate-800"] {
+  color: rgb(241 245 249) !important;
+}
+
+html.dark body [class~="text-slate-700"],
+html.dark body [class~="text-slate-600"] {
+  color: rgb(203 213 225) !important;
+}
+
+html.dark body [class~="text-slate-500"],
+html.dark body [class~="text-slate-400"] {
+  color: rgb(148 163 184) !important;
+}
+
+html.dark body [class~="hover:bg-slate-50"]:hover,
+html.dark body [class~="hover:bg-slate-50/30"]:hover,
+html.dark body [class~="hover:bg-slate-50/50"]:hover,
+html.dark body [class~="hover:bg-slate-100/50"]:hover {
+  background-color: rgb(30 41 59 / 0.72) !important;
+}

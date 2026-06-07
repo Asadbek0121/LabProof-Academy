@@ -22,6 +22,8 @@ export type Student = {
   averageScore: number;
   status: "Faol" | "Nofaol" | "O'rtacha" | "Qoniqarsiz";
   joinedAt: string;
+  createdAt?: string;
+  group?: string | null;
 };
 
 export type StatCard = {
@@ -44,10 +46,12 @@ export type ChatMessage = {
   duration?: string;
   read?: boolean;
   createdAt?: string;
+  attachmentUrl?: string;
 };
 
 export type Conversation = {
   id: string;
+  backend?: "notification" | "legacy_inbox" | "archive";
   name: string;
   label?: string;
   lastMessage: string;
@@ -56,6 +60,12 @@ export type Conversation = {
   online: boolean;
   source: "telegram" | "student_app";
   avatar?: string;
+  participantUserId?: string | null;
+  telegramChatId?: string | null;
+  phone?: string;
+  username?: string;
+  about?: string[];
+  lastSeenLabel?: string;
   messages: ChatMessage[];
 };
 

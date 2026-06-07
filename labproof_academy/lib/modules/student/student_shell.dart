@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:video_player/video_player.dart';
@@ -65,9 +66,10 @@ class StudentShell extends StatefulWidget {
 
 class _StudentShellState extends State<StudentShell> {
   static const _repository = SupabaseAcademyRepository();
+  static const _securityPinKey = 'student_security_pin';
   static const _appVersionName = String.fromEnvironment(
     'APP_VERSION_NAME',
-    defaultValue: 'dev',
+    defaultValue: '1.2.0',
   );
 
   _StudentTab _tab = _StudentTab.home;
@@ -90,6 +92,9 @@ class _StudentShellState extends State<StudentShell> {
   List<StudentNotification> _notifications = const [];
   Timer? _notificationPoller;
   bool _loading = true;
+  bool _checkingSecurity = true;
+  bool _lockedByPin = false;
+  String _savedSecurityPin = '';
   String? _loadError;
 
   @override
@@ -98,10 +103,35 @@ class _StudentShellState extends State<StudentShell> {
     registerOpenSupportSheet(() {
       unawaited(_openAdminSupportSheet());
     });
+    unawaited(_loadSecurityLock());
     _loadDashboard();
     _notificationPoller = Timer.periodic(
       const Duration(seconds: 45),
       (_) => _refreshNotifications(silent: true),
+    );
+  }
+
+  Future<void> _loadSecurityLock() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pin = prefs.getString(_securityPinKey) ?? '';
+    if (!mounted) return;
+    setState(() {
+      _savedSecurityPin = pin;
+      _lockedByPin = pin.isNotEmpty;
+      _checkingSecurity = false;
+    });
+  }
+
+  void _unlockWithPin(String pin) {
+    if (pin == _savedSecurityPin) {
+      setState(() => _lockedByPin = false);
+      return;
+    }
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text('PIN noto‘g‘ri kiritildi.'),
+        backgroundColor: AppColors.errorRed,
+      ),
     );
   }
 
@@ -352,13 +382,6 @@ class _StudentShellState extends State<StudentShell> {
       _prevTabIndex = _StudentTab.values.indexOf(_tab);
       _tab = _StudentTab.home;
       _stage = _LearningStage.moduleList;
-    });
-  }
-
-  void _openProfileTab() {
-    setState(() {
-      _prevTabIndex = _StudentTab.values.indexOf(_tab);
-      _tab = _StudentTab.profile;
     });
   }
 
@@ -733,6 +756,7 @@ class _StudentShellState extends State<StudentShell> {
     final maxAppWidth = isDesktopProfile
         ? 1200.0
         : (isWide ? 470.0 : double.infinity);
+    final isSecurityLocked = _checkingSecurity || _lockedByPin;
 
     return _StudentLanguageScope(
       language: widget.language,
@@ -748,60 +772,67 @@ class _StudentShellState extends State<StudentShell> {
               child: Center(
                 child: ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: maxAppWidth),
-                  child: _data == null
+                  child: isSecurityLocked
+                      ? _StudentPinLockScreen(
+                          loading: _checkingSecurity,
+                          onUnlock: _unlockWithPin,
+                        )
+                      : _data == null
                       ? _buildTabContent()
                       : _buildIndexedTabContent(_data!),
                 ),
               ),
             ),
           ),
-          bottomNavigationBar: Center(
-            heightFactor: 1,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: maxAppWidth),
-              child: _StudentBottomNav(
-                selectedIndex: _StudentTab.values.indexOf(_tab),
-                onTabChanged: (index) {
-                  HapticFeedback.selectionClick();
-                  setState(() {
-                    _prevTabIndex = _StudentTab.values.indexOf(_tab);
-                    _tab = _StudentTab.values[index];
-                    if (_tab == _StudentTab.modules) {
-                      _stage = _LearningStage.moduleList;
-                    }
-                  });
-                },
-                isDark: widget.themeMode == ThemeMode.dark,
-                items: [
-                  _NavItem(
-                    icon: Icons.home_outlined,
-                    activeIcon: Icons.home_rounded,
-                    label: studentText(widget.language, 'home'),
+          bottomNavigationBar: isSecurityLocked
+              ? null
+              : Center(
+                  heightFactor: 1,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: maxAppWidth),
+                    child: _StudentBottomNav(
+                      selectedIndex: _StudentTab.values.indexOf(_tab),
+                      onTabChanged: (index) {
+                        HapticFeedback.selectionClick();
+                        setState(() {
+                          _prevTabIndex = _StudentTab.values.indexOf(_tab);
+                          _tab = _StudentTab.values[index];
+                          if (_tab == _StudentTab.modules) {
+                            _stage = _LearningStage.moduleList;
+                          }
+                        });
+                      },
+                      isDark: widget.themeMode == ThemeMode.dark,
+                      items: [
+                        _NavItem(
+                          icon: Icons.home_outlined,
+                          activeIcon: Icons.home_rounded,
+                          label: studentText(widget.language, 'home'),
+                        ),
+                        _NavItem(
+                          icon: Icons.menu_book_outlined,
+                          activeIcon: Icons.menu_book_rounded,
+                          label: 'Kurslar',
+                        ),
+                        _NavItem(
+                          icon: Icons.leaderboard_outlined,
+                          activeIcon: Icons.leaderboard_rounded,
+                          label: studentText(widget.language, 'progress'),
+                        ),
+                        _NavItem(
+                          icon: Icons.forum_outlined,
+                          activeIcon: Icons.forum_rounded,
+                          label: 'Community',
+                        ),
+                        _NavItem(
+                          icon: Icons.account_circle_outlined,
+                          activeIcon: Icons.account_circle_rounded,
+                          label: studentText(widget.language, 'profile'),
+                        ),
+                      ],
+                    ),
                   ),
-                  _NavItem(
-                    icon: Icons.menu_book_outlined,
-                    activeIcon: Icons.menu_book_rounded,
-                    label: 'Kurslar',
-                  ),
-                  _NavItem(
-                    icon: Icons.leaderboard_outlined,
-                    activeIcon: Icons.leaderboard_rounded,
-                    label: studentText(widget.language, 'progress'),
-                  ),
-                  _NavItem(
-                    icon: Icons.forum_outlined,
-                    activeIcon: Icons.forum_rounded,
-                    label: 'Community',
-                  ),
-                  _NavItem(
-                    icon: Icons.account_circle_outlined,
-                    activeIcon: Icons.account_circle_rounded,
-                    label: studentText(widget.language, 'profile'),
-                  ),
-                ],
-              ),
-            ),
-          ),
+                ),
         ),
       ),
     );
@@ -816,10 +847,8 @@ class _StudentShellState extends State<StudentShell> {
         _StudentScrollScreen(
           child: _HomeDashboard(
             data: data,
-            onRefresh: _loadDashboard,
             notificationCount: _unreadNotificationCount,
             onNotifications: _openNotifications,
-            onMenu: _openProfileTab,
             onContinue: () => _openModulesTab(detail: true),
             onCourses: () => _openModulesTab(),
             onProgress: _openProgressTab,
@@ -842,7 +871,6 @@ class _StudentShellState extends State<StudentShell> {
         _StudentScrollScreen(
           child: TwitterStyleCommunity(
             data: data,
-            onRefresh: _loadDashboard,
             notificationCount: _unreadNotificationCount,
             onNotifications: _openNotifications,
           ),
@@ -897,10 +925,8 @@ class _StudentShellState extends State<StudentShell> {
         return _StudentScrollScreen(
           child: _HomeDashboard(
             data: data,
-            onRefresh: _loadDashboard,
             notificationCount: _unreadNotificationCount,
             onNotifications: _openNotifications,
-            onMenu: _openProfileTab,
             onContinue: () => _openModulesTab(detail: true),
             onCourses: () => _openModulesTab(),
             onProgress: _openProgressTab,
@@ -914,7 +940,6 @@ class _StudentShellState extends State<StudentShell> {
         return _StudentScrollScreen(
           child: TwitterStyleCommunity(
             data: data,
-            onRefresh: _loadDashboard,
             notificationCount: _unreadNotificationCount,
             onNotifications: _openNotifications,
           ),
@@ -1180,6 +1205,113 @@ class _StudentLanguageScope extends InheritedWidget {
 
 String _t(BuildContext context, String key) {
   return studentText(_StudentLanguageScope.of(context), key);
+}
+
+class _StudentPinLockScreen extends StatefulWidget {
+  const _StudentPinLockScreen({required this.loading, required this.onUnlock});
+
+  final bool loading;
+  final ValueChanged<String> onUnlock;
+
+  @override
+  State<_StudentPinLockScreen> createState() => _StudentPinLockScreenState();
+}
+
+class _StudentPinLockScreenState extends State<_StudentPinLockScreen> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final pin = _controller.text.trim();
+    if (pin.length != 4) return;
+    widget.onUnlock(pin);
+    _controller.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 360),
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: AppColors.border),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.navy.withValues(alpha: .08),
+                blurRadius: 24,
+                offset: const Offset(0, 14),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const IconBadge(
+                icon: Icons.lock_rounded,
+                color: AppColors.studentPrimary,
+                size: 58,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'PIN kiriting',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Ilovaga kirish uchun 4 xonali parolni yozing.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: _controller,
+                autofocus: true,
+                obscureText: true,
+                textAlign: TextAlign.center,
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(4),
+                ],
+                onChanged: (value) {
+                  if (value.length == 4) _submit();
+                },
+                onSubmitted: (_) => _submit(),
+                decoration: const InputDecoration(
+                  hintText: '••••',
+                  prefixIcon: Icon(Icons.pin_rounded),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _submit,
+                  icon: const Icon(Icons.lock_open_rounded),
+                  label: const Text('Kirish'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _StudentAppBackground extends StatelessWidget {
@@ -1738,8 +1870,6 @@ class _HomeDashboard extends StatelessWidget {
     required this.onProgress,
     required this.onQuizzes,
     required this.onBookmarks,
-    required this.onMenu,
-    required this.onRefresh,
     required this.notificationCount,
     required this.onNotifications,
   });
@@ -1750,8 +1880,6 @@ class _HomeDashboard extends StatelessWidget {
   final VoidCallback onProgress;
   final VoidCallback onQuizzes;
   final VoidCallback onBookmarks;
-  final VoidCallback onMenu;
-  final Future<void> Function() onRefresh;
   final int notificationCount;
   final VoidCallback onNotifications;
 
@@ -1797,34 +1925,17 @@ class _HomeDashboard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: MainAxisAlignment.end,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            headerCircleButton(
-              tooltip: 'Profil va sozlamalar',
-              onPressed: onMenu,
-              icon: Icons.menu_rounded,
-            ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                headerCircleButton(
-                  tooltip: 'Yangilash',
-                  onPressed: () => unawaited(onRefresh()),
-                  icon: Icons.refresh_rounded,
-                  iconSize: 27,
-                ),
-                const SizedBox(width: 16),
-                Badge.count(
-                  isLabelVisible: notificationCount > 0,
-                  count: notificationCount,
-                  child: headerCircleButton(
-                    tooltip: 'Bildirishnomalar',
-                    onPressed: onNotifications,
-                    icon: Icons.notifications_none_rounded,
-                  ),
-                ),
-              ],
+            Badge.count(
+              isLabelVisible: notificationCount > 0,
+              count: notificationCount,
+              child: headerCircleButton(
+                tooltip: 'Bildirishnomalar',
+                onPressed: onNotifications,
+                icon: Icons.notifications_none_rounded,
+              ),
             ),
           ],
         ),
@@ -1856,43 +1967,6 @@ class _HomeDashboard extends StatelessWidget {
                           : const Color(0xFF64748B),
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.white.withValues(alpha: .06)
-                    : Colors.white.withValues(alpha: .82),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: .1)
-                      : const Color(0xFFE2E8F0),
-                ),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    '$overallPercent%',
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    t('progress'),
-                    style: TextStyle(
-                      color: isDark
-                          ? Colors.white.withValues(alpha: .48)
-                          : const Color(0xFF64748B),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
@@ -3124,23 +3198,6 @@ class _ModulesListScreenState extends State<_ModulesListScreen> {
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
                 ),
-              ),
-            ),
-            IconButton(
-              tooltip: 'Saqlangan kurslar',
-              onPressed: () {
-                ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                  const SnackBar(content: Text('Saqlangan kurslar tez kunda.')),
-                );
-              },
-              icon: Icon(
-                Icons.bookmark_border_rounded,
-                color: isDark ? Colors.white : const Color(0xFF0F172A),
-              ),
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                minimumSize: const Size(36, 36),
-                padding: EdgeInsets.zero,
               ),
             ),
           ],
@@ -10165,12 +10222,6 @@ class _ProgressScreen extends StatelessWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _ProgressCircleAction(
-                tooltip: 'Yangilash',
-                onPressed: () => unawaited(onRefresh()),
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-              const SizedBox(width: 16),
               Badge.count(
                 isLabelVisible: notificationCount > 0,
                 count: notificationCount,
@@ -10727,7 +10778,7 @@ class _ProfileScreen extends StatelessWidget {
     final profileShadow = isDark
         ? const Color(0xFF020617).withValues(alpha: .22)
         : AppColors.studentPrimary.withValues(alpha: .07);
-    final profileHandle = _profileHandle(profile);
+    final profileCode = _profileDisplayCode(profile);
     final activeCourses = data.modules
         .where((module) => module.isUnlocked)
         .length;
@@ -10736,10 +10787,40 @@ class _ProfileScreen extends StatelessWidget {
         data.averageScore * 25 +
         data.certificateCount * 1000;
     final level = math.max(1, data.completedModules + data.averageScore ~/ 20);
+    String pt(String key) => _profileText(language, key);
 
-    void showComingSoon(String message) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    Future<void> openSecurity() {
+      return showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => _ProfileSecuritySheet(language: language),
+      );
+    }
+
+    Future<void> openBilling() {
+      return showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => _ProfileBillingSheet(
+          data: data,
+          language: language,
+          onContactAdmin: onContactAdmin,
+        ),
+      );
+    }
+
+    Future<void> openAbout() {
+      return showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (context) => _ProfileAboutSheet(
+          language: language,
+          appVersionName: appVersionName,
+          onCheckForUpdate: onCheckForUpdate,
+        ),
       );
     }
 
@@ -10768,19 +10849,14 @@ class _ProfileScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  _ProfileCircleButton(
-                    icon: Icons.arrow_back_rounded,
-                    tooltip: 'Ortga',
-                    onTap: () => showComingSoon(
-                      'Sahifalar orasida pastki navigatsiya orqali yuring.',
-                    ),
-                  ),
-                  Expanded(
-                    child: Center(
+              SizedBox(
+                height: 44,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Center(
                       child: Text(
-                        'Talaba profili',
+                        pt('profile_title'),
                         style: TextStyle(
                           color: profileText,
                           fontSize: 18,
@@ -10789,42 +10865,45 @@ class _ProfileScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ),
-                  Badge.count(
-                    isLabelVisible: notificationCount > 0,
-                    count: notificationCount,
-                    child: _ProfileCircleButton(
-                      icon: Icons.notifications_none_rounded,
-                      tooltip: _t(context, 'notifications'),
-                      onTap: onNotifications,
+                    Positioned(
+                      right: 0,
+                      child: Badge.count(
+                        isLabelVisible: notificationCount > 0,
+                        count: notificationCount,
+                        child: _ProfileCircleButton(
+                          icon: Icons.notifications_none_rounded,
+                          tooltip: _t(context, 'notifications'),
+                          onTap: onNotifications,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               const SizedBox(height: 18),
               _ProfileHeroCard(
                 profile: profile,
-                handle: profileHandle,
+                studentCode: profileCode,
                 activeCourses: activeCourses,
                 totalXp: totalXp,
                 level: level,
                 onEditProfile: onEditProfile,
               ),
               const SizedBox(height: 18),
-              const _ProfileSectionTitle('Hisob va sozlamalar'),
+              _ProfileSectionTitle(pt('account_settings')),
               const SizedBox(height: 10),
               _ProfileSettingsGridCard(
                 items: [
                   _ProfileSettingsAction(
                     icon: Icons.person_outline_rounded,
-                    title: 'Shaxsiy ma’lumotlar',
-                    subtitle: 'Profil va shaxsiy ma’lumotlarni boshqarish',
+                    title: pt('personal_info'),
+                    subtitle: pt('personal_info_subtitle'),
                     onTap: () => unawaited(onEditProfile()),
                   ),
                   _ProfileSettingsAction(
                     icon: Icons.language_rounded,
-                    title: 'Til',
-                    subtitle: 'Ilova tili va mintaqa',
+                    title: studentText(language, 'language'),
+                    subtitle: pt('language_subtitle'),
                     trailing: _ProfileInlineValue(value: language.label),
                     onTap: () async {
                       final picked = await _showSelectionSheet<AppLanguage>(
@@ -10841,17 +10920,16 @@ class _ProfileScreen extends StatelessWidget {
                   ),
                   _ProfileSettingsAction(
                     icon: Icons.lock_outline_rounded,
-                    title: 'Xavfsizlik',
-                    subtitle: 'Parol va xavfsizlik sozlamalari',
-                    onTap: () =>
-                        showComingSoon('Xavfsizlik bo‘limi tez orada.'),
+                    title: pt('security'),
+                    subtitle: pt('security_subtitle'),
+                    onTap: () => unawaited(openSecurity()),
                   ),
                   _ProfileSettingsAction(
                     icon: isDark
                         ? Icons.dark_mode_rounded
                         : Icons.light_mode_rounded,
-                    title: 'Qorong‘i rejim',
-                    subtitle: 'Ilova ko‘rinishini almashtirish',
+                    title: studentText(language, 'dark_mode'),
+                    subtitle: pt('dark_mode_subtitle'),
                     trailing: Switch.adaptive(
                       value: isDark,
                       onChanged: (value) => onThemeChanged(
@@ -10865,20 +10943,20 @@ class _ProfileScreen extends StatelessWidget {
                   ),
                   _ProfileSettingsAction(
                     icon: Icons.credit_card_rounded,
-                    title: 'To‘lovlar va obuna',
-                    subtitle: 'Obuna holati va to‘lov tarixi',
-                    onTap: () => showComingSoon('To‘lovlar bo‘limi tez orada.'),
+                    title: pt('billing'),
+                    subtitle: pt('billing_subtitle'),
+                    onTap: () => unawaited(openBilling()),
                   ),
                   _ProfileSettingsAction(
                     icon: Icons.support_agent_rounded,
-                    title: 'Yordam va qo‘llab-quvvatlash',
-                    subtitle: 'Yordam markazi va aloqa',
+                    title: pt('support'),
+                    subtitle: pt('support_subtitle'),
                     onTap: () => unawaited(onContactAdmin()),
                   ),
                   _ProfileSettingsAction(
                     icon: Icons.notifications_none_rounded,
-                    title: 'Bildirishnomalar',
-                    subtitle: 'Bildirishnoma sozlamalari',
+                    title: studentText(language, 'notifications'),
+                    subtitle: pt('notifications_subtitle'),
                     trailing: Switch.adaptive(
                       value: notificationsEnabled,
                       onChanged: onNotificationsChanged,
@@ -10890,9 +10968,10 @@ class _ProfileScreen extends StatelessWidget {
                   ),
                   _ProfileSettingsAction(
                     icon: Icons.info_outline_rounded,
-                    title: 'Ilova haqida',
-                    subtitle: 'Versiya $appVersionName',
-                    onTap: () => unawaited(onCheckForUpdate()),
+                    title: pt('about'),
+                    subtitle:
+                        '${studentText(language, 'version_label')} v$appVersionName',
+                    onTap: () => unawaited(openAbout()),
                   ),
                 ],
               ),
@@ -10942,20 +11021,1237 @@ class _ProfileScreen extends StatelessWidget {
   }
 }
 
-String _profileHandle(StudentProfile profile) {
-  final cleaned = profile.fullName
-      .toLowerCase()
-      .replaceAll(RegExp(r"[^a-z0-9\s_]+"), '')
-      .trim()
-      .replaceAll(RegExp(r'\s+'), '_');
-  if (cleaned.isEmpty) return '@student_lab';
-  return '@${cleaned}_lab';
+String _profileText(AppLanguage language, String key) {
+  const uz = {
+    'profile_title': 'Talaba profili',
+    'account_settings': 'Hisob va sozlamalar',
+    'personal_info': 'Shaxsiy ma’lumotlar',
+    'personal_info_subtitle': 'Profil va shaxsiy ma’lumotlarni boshqarish',
+    'language_subtitle': 'Ilova tili va mintaqa',
+    'security': 'Xavfsizlik',
+    'security_subtitle': 'Parol va xavfsizlik sozlamalari',
+    'dark_mode_subtitle': 'Ilova ko‘rinishini almashtirish',
+    'billing': 'To‘lovlar va obuna',
+    'billing_subtitle': 'Obuna holati va to‘lov tarixi',
+    'support': 'Yordam va qo‘llab-quvvatlash',
+    'support_subtitle': 'Yordam markazi va aloqa',
+    'notifications_subtitle': 'Bildirishnoma sozlamalari',
+    'about': 'Ilova haqida',
+    'security_title': 'Xavfsizlik',
+    'pin_title': '4 xonali parol',
+    'pin_subtitle': 'Ilovaga kirishda PIN so‘ralsin',
+    'pin_hint': '4 ta raqam kiriting',
+    'pin_save': 'PIN saqlash',
+    'pin_saved': '4 xonali parol saqlandi.',
+    'biometric_title': 'Biometrik qulf',
+    'biometric_subtitle': 'Qurilma biometrik himoyasidan foydalanish',
+    'biometric_note':
+        'APK qurilmada barmoq izi yoki Face ID mavjud bo‘lsa, keyingi bosqichda shu sozlama orqali tekshiruv yoqiladi.',
+    'billing_title': 'To‘lovlar va obuna',
+    'active_subscription': 'Faol obuna',
+    'available_plans': 'Mavjud tariflar',
+    'payment_history': 'To‘lov tarixi',
+    'no_subscription': 'Faol obuna topilmadi.',
+    'no_payments': 'To‘lov tarixi hali yo‘q.',
+    'manage_with_admin': 'To‘lovni boshqarish',
+    'about_goal': 'Maqsad',
+    'about_goal_text':
+        'LabProof Academy laboratoriya sohasi bo‘yicha darslar, testlar, progress va sertifikatlarni bitta mobil ilovada jamlaydi.',
+    'about_how': 'Qanday ishlaydi',
+    'about_how_text':
+        'Student modullarni ketma-ket o‘rganadi, matn/video darslarni tugatadi, test topshiradi va natijasi profil hamda progress bo‘limida saqlanadi.',
+    'terms': 'Foydalanish shartlari',
+    'terms_text':
+        'Akkauntdan faqat egasi foydalanadi. O‘quv materiallarini ruxsatsiz tarqatish va tizimdan noto‘g‘ri foydalanish taqiqlanadi.',
+    'privacy': 'Maxfiylik siyosati',
+    'privacy_text':
+        'Telefon raqam, profil ma’lumotlari, progress va to‘lov holati faqat ta’lim jarayonini yuritish va xavfsizlik uchun ishlatiladi.',
+    'payment_policy': 'To‘lov siyosati',
+    'payment_policy_text':
+        'Pullik modullar va obunalar admin panelda belgilangan tariflar asosida ochiladi. To‘lov holati tasdiqlangandan so‘ng kontentga ruxsat beriladi.',
+    'check_update': 'Yangilanishni tekshirish',
+  };
+  const ru = {
+    'profile_title': 'Профиль студента',
+    'account_settings': 'Аккаунт и настройки',
+    'personal_info': 'Личные данные',
+    'personal_info_subtitle': 'Управление профилем и личными данными',
+    'language_subtitle': 'Язык приложения и регион',
+    'security': 'Безопасность',
+    'security_subtitle': 'Пароль и настройки безопасности',
+    'dark_mode_subtitle': 'Изменение внешнего вида приложения',
+    'billing': 'Платежи и подписка',
+    'billing_subtitle': 'Статус подписки и история платежей',
+    'support': 'Помощь и поддержка',
+    'support_subtitle': 'Центр помощи и связь',
+    'notifications_subtitle': 'Настройки уведомлений',
+    'about': 'О приложении',
+    'security_title': 'Безопасность',
+    'pin_title': '4-значный пароль',
+    'pin_subtitle': 'Запрашивать PIN при входе в приложение',
+    'pin_hint': 'Введите 4 цифры',
+    'pin_save': 'Сохранить PIN',
+    'pin_saved': '4-значный пароль сохранён.',
+    'biometric_title': 'Биометрическая блокировка',
+    'biometric_subtitle': 'Использовать защиту устройства',
+    'biometric_note':
+        'В APK при наличии отпечатка или Face ID эта настройка будет включать проверку.',
+    'billing_title': 'Платежи и подписка',
+    'active_subscription': 'Активная подписка',
+    'available_plans': 'Доступные тарифы',
+    'payment_history': 'История платежей',
+    'no_subscription': 'Активная подписка не найдена.',
+    'no_payments': 'Истории платежей пока нет.',
+    'manage_with_admin': 'Управлять оплатой',
+    'about_goal': 'Цель',
+    'about_goal_text':
+        'LabProof Academy объединяет уроки, тесты, прогресс и сертификаты по лабораторному направлению в одном мобильном приложении.',
+    'about_how': 'Как работает',
+    'about_how_text':
+        'Студент проходит модули по порядку, завершает текстовые и видеоуроки, сдаёт тесты, а результат сохраняется в профиле и прогрессе.',
+    'terms': 'Условия использования',
+    'terms_text':
+        'Аккаунтом пользуется только владелец. Запрещено распространять учебные материалы без разрешения и злоупотреблять системой.',
+    'privacy': 'Политика конфиденциальности',
+    'privacy_text':
+        'Телефон, профиль, прогресс и платежный статус используются только для обучения и безопасности.',
+    'payment_policy': 'Политика оплаты',
+    'payment_policy_text':
+        'Платные модули и подписки открываются по тарифам из админ-панели. Доступ предоставляется после подтверждения оплаты.',
+    'check_update': 'Проверить обновление',
+  };
+  const cyr = {
+    'profile_title': 'Талаба профили',
+    'account_settings': 'Ҳисоб ва созламалар',
+    'personal_info': 'Шахсий маълумотлар',
+    'personal_info_subtitle': 'Профил ва шахсий маълумотларни бошқариш',
+    'language_subtitle': 'Илова тили ва минтақа',
+    'security': 'Хавфсизлик',
+    'security_subtitle': 'Парол ва хавфсизлик созламалари',
+    'dark_mode_subtitle': 'Илова кўринишини алмаштириш',
+    'billing': 'Тўловлар ва обуна',
+    'billing_subtitle': 'Обуна ҳолати ва тўлов тарихи',
+    'support': 'Ёрдам ва қўллаб-қувватлаш',
+    'support_subtitle': 'Ёрдам маркази ва алоқа',
+    'notifications_subtitle': 'Билдиришнома созламалари',
+    'about': 'Илова ҳақида',
+    'security_title': 'Хавфсизлик',
+    'pin_title': '4 хонали парол',
+    'pin_subtitle': 'Иловага киришда PIN сўралсин',
+    'pin_hint': '4 та рақам киритинг',
+    'pin_save': 'PIN сақлаш',
+    'pin_saved': '4 хонали парол сақланди.',
+    'biometric_title': 'Биометрик қулф',
+    'biometric_subtitle': 'Қурилма биометрик ҳимоясидан фойдаланиш',
+    'biometric_note':
+        'APK қурилмада бармоқ изи ёки Face ID мавжуд бўлса, кейинги босқичда шу созлама орқали текширув ёқилади.',
+    'billing_title': 'Тўловлар ва обуна',
+    'active_subscription': 'Фаол обуна',
+    'available_plans': 'Мавжуд тарифлар',
+    'payment_history': 'Тўлов тарихи',
+    'no_subscription': 'Фаол обуна топилмади.',
+    'no_payments': 'Тўлов тарихи ҳали йўқ.',
+    'manage_with_admin': 'Тўловни бошқариш',
+    'about_goal': 'Мақсад',
+    'about_goal_text':
+        'LabProof Academy лаборатория соҳаси бўйича дарслар, тестлар, progress ва сертификатларни битта мобил иловада жамлайди.',
+    'about_how': 'Қандай ишлайди',
+    'about_how_text':
+        'Талаба модулларни кетма-кет ўрганади, матн/видео дарсларни тугатади, тест топширади ва натижаси профил ҳамда progress бўлимида сақланади.',
+    'terms': 'Фойдаланиш шартлари',
+    'terms_text':
+        'Аккаунтдан фақат эгаси фойдаланади. Ўқув материалларини рухсатсиз тарқатиш ва тизимдан нотўғри фойдаланиш тақиқланади.',
+    'privacy': 'Махфийлик сиёсати',
+    'privacy_text':
+        'Телефон рақам, профил маълумотлари, progress ва тўлов ҳолати фақат таълим жараёнини юритиш ва хавфсизлик учун ишлатилади.',
+    'payment_policy': 'Тўлов сиёсати',
+    'payment_policy_text':
+        'Пуллик модуллар ва обуналар admin panelда белгиланган тарифлар асосида очилади. Тўлов ҳолати тасдиқлангандан сўнг контентга рухсат берилади.',
+    'check_update': 'Янгиланишни текшириш',
+  };
+  return switch (language) {
+    AppLanguage.ru => ru[key] ?? uz[key] ?? key,
+    AppLanguage.uzCyrillic => cyr[key] ?? uz[key] ?? key,
+    AppLanguage.uzLatin => uz[key] ?? key,
+  };
+}
+
+class _ProfileSecuritySheet extends StatefulWidget {
+  const _ProfileSecuritySheet({required this.language});
+
+  final AppLanguage language;
+
+  @override
+  State<_ProfileSecuritySheet> createState() => _ProfileSecuritySheetState();
+}
+
+class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
+  static const _pinKey = 'student_security_pin';
+  static const _biometricKey = 'student_biometric_lock';
+
+  final _pinController = TextEditingController();
+  bool _pinEnabled = false;
+  bool _biometricEnabled = false;
+  bool _loading = true;
+  bool _saving = false;
+
+  String t(String key) => _profileText(widget.language, key);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _pinController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final savedPin = prefs.getString(_pinKey) ?? '';
+    setState(() {
+      _pinController.text = savedPin;
+      _pinEnabled = savedPin.isNotEmpty;
+      _biometricEnabled = prefs.getBool(_biometricKey) ?? false;
+      _loading = false;
+    });
+  }
+
+  Future<void> _savePin() async {
+    final pin = _pinController.text.trim();
+    if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('PIN 4 ta raqamdan iborat bo‘lishi kerak.'),
+          backgroundColor: AppColors.errorRed,
+        ),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pinKey, pin);
+    if (!mounted) return;
+    setState(() {
+      _pinEnabled = true;
+      _saving = false;
+    });
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(t('pin_saved'))));
+  }
+
+  Future<void> _removePin() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pinKey);
+    await prefs.setBool(_biometricKey, false);
+    if (!mounted) return;
+    setState(() {
+      _pinController.clear();
+      _pinEnabled = false;
+      _biometricEnabled = false;
+    });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('PIN va biometrik qulf o‘chirildi.')),
+    );
+  }
+
+  Future<void> _setBiometric(bool value) async {
+    if (value && !_pinEnabled) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('Avval 4 xonali PIN saqlang.'),
+          backgroundColor: AppColors.errorRed,
+        ),
+      );
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_biometricKey, value);
+    if (mounted) setState(() => _biometricEnabled = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileModalScaffold(
+      title: t('security_title'),
+      child: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ProfileStatusCard(
+                        icon: Icons.pin_rounded,
+                        title: 'PIN',
+                        value: _pinEnabled ? 'Yoqilgan' : 'O‘chiq',
+                        color: _pinEnabled
+                            ? const Color(0xFF22C55E)
+                            : AppColors.studentPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _ProfileStatusCard(
+                        icon: Icons.fingerprint_rounded,
+                        title: 'Biometrik',
+                        value: _biometricEnabled ? 'Faol' : 'O‘chiq',
+                        color: _biometricEnabled
+                            ? const Color(0xFF22C55E)
+                            : const Color(0xFFF59E0B),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _ProfileSectionPanel(
+                  icon: Icons.password_rounded,
+                  title: t('pin_title'),
+                  subtitle: t('pin_subtitle'),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _pinController,
+                        keyboardType: TextInputType.number,
+                        obscureText: true,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(4),
+                        ],
+                        decoration: InputDecoration(
+                          labelText: t('pin_hint'),
+                          prefixIcon: const Icon(Icons.pin_rounded),
+                          suffixIcon: _pinEnabled
+                              ? const Icon(
+                                  Icons.verified_rounded,
+                                  color: Color(0xFF22C55E),
+                                )
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _saving ? null : _savePin,
+                              icon: Icon(
+                                _saving
+                                    ? Icons.hourglass_top_rounded
+                                    : Icons.lock_rounded,
+                              ),
+                              label: Text(t('pin_save')),
+                            ),
+                          ),
+                          if (_pinEnabled) ...[
+                            const SizedBox(width: 10),
+                            IconButton.filledTonal(
+                              tooltip: 'PINni o‘chirish',
+                              onPressed: _removePin,
+                              icon: const Icon(Icons.delete_outline_rounded),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _ProfileToggleRow(
+                  icon: Icons.fingerprint_rounded,
+                  title: t('biometric_title'),
+                  subtitle: t('biometric_subtitle'),
+                  value: _biometricEnabled,
+                  onChanged: _setBiometric,
+                ),
+                const SizedBox(height: 12),
+                _ProfileNoticeBox(
+                  icon: Icons.info_outline_rounded,
+                  text: t('biometric_note'),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _ProfileBillingSheet extends StatefulWidget {
+  const _ProfileBillingSheet({
+    required this.data,
+    required this.language,
+    required this.onContactAdmin,
+  });
+
+  final StudentDashboardData data;
+  final AppLanguage language;
+  final Future<void> Function() onContactAdmin;
+
+  @override
+  State<_ProfileBillingSheet> createState() => _ProfileBillingSheetState();
+}
+
+class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
+  static const _repository = SupabaseAcademyRepository();
+  Map<String, List<Map<String, dynamic>>>? _billing;
+  Object? _error;
+
+  String t(String key) => _profileText(widget.language, key);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _billing = null;
+      _error = null;
+    });
+    try {
+      final data = await _repository.loadStudentBilling();
+      if (mounted) setState(() => _billing = data);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = error);
+    }
+  }
+
+  Future<void> _openSupport() async {
+    Navigator.of(context).pop();
+    await widget.onContactAdmin();
+  }
+
+  String _subscriptionTitle(Map<String, dynamic> row) {
+    final plan = row['subscription_plans'];
+    if (plan is Map && (plan['title'] ?? '').toString().trim().isNotEmpty) {
+      return plan['title'].toString();
+    }
+    return (row['plan_key'] ?? 'Premium').toString();
+  }
+
+  String _money(Map<String, dynamic> row) {
+    final amount = row['amount'];
+    final currency = (row['currency'] ?? 'UZS').toString();
+    if (amount == null) return '';
+    return '$amount $currency';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final paidModules = widget.data.modules
+        .where((module) => module.requiresSubscription)
+        .toList();
+    final billing = _billing;
+    final error = _error;
+    final subscriptions = <Map<String, dynamic>>[
+      ...(billing?['subscriptions'] ?? const <Map<String, dynamic>>[]),
+      ...(billing?['legacySubscriptions'] ?? const <Map<String, dynamic>>[]),
+    ];
+    final transactions =
+        billing?['transactions'] ?? const <Map<String, dynamic>>[];
+    final plans = billing?['plans'] ?? const <Map<String, dynamic>>[];
+    return _ProfileModalScaffold(
+      title: t('billing_title'),
+      child: error != null
+          ? _ProfileErrorState(
+              icon: Icons.credit_card_off_rounded,
+              title: 'To‘lov ma’lumotlari yuklanmadi',
+              message: error.toString().replaceFirst('Exception: ', ''),
+              onRetry: _load,
+            )
+          : billing == null
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _ProfileBillingSummary(
+                  activeCount: subscriptions.length,
+                  planCount: plans.length + paidModules.length,
+                  transactionCount: transactions.length,
+                ),
+                const SizedBox(height: 18),
+                _ProfileSheetTitle(t('active_subscription')),
+                if (subscriptions.isEmpty)
+                  _ProfileEmptyPanel(
+                    icon: Icons.workspace_premium_outlined,
+                    title: t('no_subscription'),
+                    subtitle:
+                        'Pullik modullarni ochish uchun admin tasdiqlagan tariflardan birini tanlang.',
+                  )
+                else ...[
+                  for (final row in subscriptions)
+                    _BillingRow(
+                      icon: Icons.verified_rounded,
+                      iconColor: const Color(0xFF22C55E),
+                      title: _subscriptionTitle(row),
+                      subtitle:
+                          '${row['status'] ?? 'active'} · ${row['billing_interval'] ?? row['ends_at'] ?? ''}',
+                      value: _money(row),
+                    ),
+                ],
+                const SizedBox(height: 18),
+                _ProfileSheetTitle(t('available_plans')),
+                if (plans.isEmpty && paidModules.isEmpty)
+                  _ProfileEmptyPanel(
+                    icon: Icons.price_check_rounded,
+                    title: 'Tariflar hali kiritilmagan',
+                    subtitle:
+                        'Tariflar admin paneldagi to‘lov sozlamasidan keladi.',
+                  )
+                else ...[
+                  for (final plan in plans)
+                    _BillingRow(
+                      icon: Icons.workspace_premium_rounded,
+                      title: (plan['title'] ?? 'Premium').toString(),
+                      subtitle: '${plan['duration_months'] ?? 1} oy',
+                      value: (plan['price_label'] ?? '').toString(),
+                    ),
+                  for (final module in paidModules)
+                    _BillingRow(
+                      icon: Icons.lock_open_rounded,
+                      title: module.title,
+                      subtitle: '${module.freeTopicLimit} ta bepul mavzu',
+                      value: module.subscriptionPriceLabel.trim().isEmpty
+                          ? 'Admin tarif'
+                          : module.subscriptionPriceLabel,
+                    ),
+                ],
+                const SizedBox(height: 18),
+                _ProfileSheetTitle(t('payment_history')),
+                if (transactions.isEmpty)
+                  _ProfileEmptyPanel(
+                    icon: Icons.receipt_long_outlined,
+                    title: t('no_payments'),
+                    subtitle:
+                        'To‘lov amalga oshirilsa, holati va sanasi shu yerda chiqadi.',
+                  )
+                else
+                  for (final row in transactions)
+                    _BillingRow(
+                      icon: Icons.receipt_long_rounded,
+                      title: (row['provider'] ?? 'payment').toString(),
+                      subtitle:
+                          '${row['status'] ?? ''} · ${(row['created_at'] ?? '').toString()}',
+                      value: _money(row),
+                    ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => unawaited(_openSupport()),
+                    icon: const Icon(Icons.support_agent_rounded),
+                    label: Text(t('manage_with_admin')),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _ProfileAboutSheet extends StatelessWidget {
+  const _ProfileAboutSheet({
+    required this.language,
+    required this.appVersionName,
+    required this.onCheckForUpdate,
+  });
+
+  final AppLanguage language;
+  final String appVersionName;
+  final Future<void> Function() onCheckForUpdate;
+
+  @override
+  Widget build(BuildContext context) {
+    String t(String key) => _profileText(language, key);
+    return _ProfileModalScaffold(
+      title: t('about'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ProfileSectionPanel(
+            icon: Icons.science_rounded,
+            title: 'LabProof Academy',
+            subtitle:
+                '${studentText(language, 'version_label')} v$appVersionName',
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: const [
+                _ProfileChip(label: 'Student app', icon: Icons.school_rounded),
+                _ProfileChip(label: 'Progress', icon: Icons.bar_chart_rounded),
+                _ProfileChip(label: 'Sertifikat', icon: Icons.verified_rounded),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          _ProfileSheetTitle('Asosiy imkoniyatlar'),
+          const _ProfileFeatureList(
+            items: [
+              (
+                Icons.menu_book_rounded,
+                'Modullar va mavzularni ketma-ket o‘rganish',
+              ),
+              (Icons.quiz_rounded, 'Test natijalarini progressga yozish'),
+              (
+                Icons.workspace_premium_rounded,
+                'Pullik kontentni obuna orqali ochish',
+              ),
+              (
+                Icons.support_agent_rounded,
+                'Admin bilan ilova ichida bog‘lanish',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _AboutBlock(title: t('about_goal'), body: t('about_goal_text')),
+          _AboutBlock(title: t('about_how'), body: t('about_how_text')),
+          _ProfilePolicyCard(
+            blocks: [
+              (t('terms'), t('terms_text')),
+              (t('privacy'), t('privacy_text')),
+              (t('payment_policy'), t('payment_policy_text')),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => unawaited(onCheckForUpdate()),
+              icon: const Icon(Icons.system_update_alt_rounded),
+              label: Text(t('check_update')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileModalScaffold extends StatelessWidget {
+  const _ProfileModalScaffold({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 20,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 16),
+              child,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileSheetTitle extends StatelessWidget {
+  const _ProfileSheetTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+      ),
+    );
+  }
+}
+
+class _ProfileStatusCard extends StatelessWidget {
+  const _ProfileStatusCard({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.withValues(alpha: .18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileSectionPanel extends StatelessWidget {
+  const _ProfileSectionPanel({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.navy.withValues(alpha: .04),
+            blurRadius: 16,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconBadge(icon: icon, color: AppColors.studentPrimary, size: 48),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Color(0xFF64748B),
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileToggleRow extends StatelessWidget {
+  const _ProfileToggleRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: AppColors.navy, size: 28),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Color(0xFF64748B), height: 1.3),
+                ),
+              ],
+            ),
+          ),
+          Switch.adaptive(
+            value: value,
+            onChanged: onChanged,
+            activeThumbColor: const Color(0xFF22C55E),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileNoticeBox extends StatelessWidget {
+  const _ProfileNoticeBox({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFF2563EB), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(color: Color(0xFF475569), height: 1.45),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileErrorState extends StatelessWidget {
+  const _ProfileErrorState({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF1F2),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppColors.errorRed.withValues(alpha: .18)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: AppColors.errorRed, size: 34),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFF64748B), height: 1.35),
+          ),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Qayta urinish'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileBillingSummary extends StatelessWidget {
+  const _ProfileBillingSummary({
+    required this.activeCount,
+    required this.planCount,
+    required this.transactionCount,
+  });
+
+  final int activeCount;
+  final int planCount;
+  final int transactionCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _ProfileStatusCard(
+            icon: Icons.verified_rounded,
+            title: 'Faol',
+            value: '$activeCount',
+            color: const Color(0xFF22C55E),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _ProfileStatusCard(
+            icon: Icons.sell_rounded,
+            title: 'Tarif',
+            value: '$planCount',
+            color: AppColors.studentPrimary,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _ProfileStatusCard(
+            icon: Icons.receipt_long_rounded,
+            title: 'To‘lov',
+            value: '$transactionCount',
+            color: const Color(0xFFF59E0B),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileEmptyPanel extends StatelessWidget {
+  const _ProfileEmptyPanel({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: const Color(0xFF64748B), size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Color(0xFF64748B)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileChip extends StatelessWidget {
+  const _ProfileChip({required this.label, required this.icon});
+
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppColors.studentPrimary.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .14),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: AppColors.studentPrimary, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.studentPrimary,
+              fontWeight: FontWeight.w900,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileFeatureList extends StatelessWidget {
+  const _ProfileFeatureList({required this.items});
+
+  final List<(IconData, String)> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Icon(items[i].$1, color: AppColors.studentPrimary, size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      items[i].$2,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (i != items.length - 1)
+              const Divider(height: 1, color: Color(0xFFE2E8F0)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfilePolicyCard extends StatelessWidget {
+  const _ProfilePolicyCard({required this.blocks});
+
+  final List<(String, String)> blocks;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < blocks.length; i++) ...[
+            Text(
+              blocks[i].$1,
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              blocks[i].$2,
+              style: const TextStyle(color: Color(0xFF64748B), height: 1.45),
+            ),
+            if (i != blocks.length - 1) const SizedBox(height: 14),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingRow extends StatelessWidget {
+  const _BillingRow({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    this.icon = Icons.workspace_premium_rounded,
+    this.iconColor = AppColors.studentPrimary,
+  });
+
+  final String title;
+  final String subtitle;
+  final String value;
+  final IconData icon;
+  final Color iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: iconColor),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                if (subtitle.trim().isNotEmpty)
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: Color(0xFF64748B)),
+                  ),
+              ],
+            ),
+          ),
+          if (value.trim().isNotEmpty)
+            Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutBlock extends StatelessWidget {
+  const _AboutBlock({required this.title, required this.body});
+
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 4),
+          Text(
+            body,
+            style: const TextStyle(color: Color(0xFF64748B), height: 1.45),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _profileDisplayCode(StudentProfile profile) {
+  final code = profile.studentCode.trim();
+  if (code.isNotEmpty) return code;
+  final hash = profile.id.codeUnits.fold<int>(
+    0,
+    (value, unit) => (value + unit) % 99999,
+  );
+  return 'LPA-${math.max(1, hash).toString().padLeft(5, '0')}';
+}
+
+String _profileMemberDate(StudentProfile profile) {
+  final value = profile.createdAt;
+  if (value == null) return 'Faol';
+  final day = value.day.toString().padLeft(2, '0');
+  final month = value.month.toString().padLeft(2, '0');
+  final year = (value.year % 100).toString().padLeft(2, '0');
+  return '$day.$month.$year';
 }
 
 class _ProfileHeroCard extends StatelessWidget {
   const _ProfileHeroCard({
     required this.profile,
-    required this.handle,
+    required this.studentCode,
     required this.activeCourses,
     required this.totalXp,
     required this.level,
@@ -10963,7 +12259,7 @@ class _ProfileHeroCard extends StatelessWidget {
   });
 
   final StudentProfile profile;
-  final String handle;
+  final String studentCode;
   final int activeCourses;
   final int totalXp;
   final int level;
@@ -10999,12 +12295,12 @@ class _ProfileHeroCard extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 560;
-          final avatarSize = compact ? 104.0 : 132.0;
-          final medalWidth = compact ? 96.0 : 156.0;
-          final medalHeight = compact ? 88.0 : 126.0;
-          final cardHeight = compact ? 184.0 : 188.0;
-          final leftInfo = compact ? avatarSize + 22 : avatarSize + 30;
-          final rightInfo = compact ? 0.0 : medalWidth + 20;
+          final avatarSize = compact ? 84.0 : 108.0;
+          final medalWidth = compact ? 70.0 : 118.0;
+          final medalHeight = compact ? 64.0 : 92.0;
+          final cardHeight = compact ? 150.0 : 166.0;
+          final leftInfo = compact ? avatarSize + 18 : avatarSize + 26;
+          final rightInfo = compact ? medalWidth + 8 : medalWidth + 18;
 
           return SizedBox(
             height: cardHeight,
@@ -11025,7 +12321,7 @@ class _ProfileHeroCard extends StatelessWidget {
                 ),
                 Positioned(
                   left: compact ? 8 : 8,
-                  top: compact ? 12 : 8,
+                  top: compact ? 10 : 8,
                   child: _ProfileHeroAvatar(
                     profile: profile,
                     onEditProfile: onEditProfile,
@@ -11033,8 +12329,8 @@ class _ProfileHeroCard extends StatelessWidget {
                   ),
                 ),
                 Positioned(
-                  right: compact ? 2 : 2,
-                  top: compact ? 10 : 0,
+                  right: compact ? -2 : 2,
+                  top: compact ? 8 : 0,
                   child: SizedBox(
                     width: medalWidth,
                     height: medalHeight,
@@ -11047,7 +12343,7 @@ class _ProfileHeroCard extends StatelessWidget {
                   top: compact ? 14 : 22,
                   child: _ProfileHeroInfo(
                     profile: profile,
-                    handle: handle,
+                    studentCode: studentCode,
                     activeCourses: activeCourses,
                     totalXp: totalXp,
                     level: level,
@@ -11060,6 +12356,7 @@ class _ProfileHeroCard extends StatelessWidget {
                   right: compact ? 4 : medalWidth + 16,
                   bottom: compact ? 8 : 10,
                   child: _ProfileHeroMetricStrip(
+                    profile: profile,
                     activeCourses: activeCourses,
                     totalXp: totalXp,
                     level: level,
@@ -11394,7 +12691,7 @@ class _ProfileHeroInitials extends StatelessWidget {
 class _ProfileHeroInfo extends StatelessWidget {
   const _ProfileHeroInfo({
     required this.profile,
-    required this.handle,
+    required this.studentCode,
     required this.activeCourses,
     required this.totalXp,
     required this.level,
@@ -11403,7 +12700,7 @@ class _ProfileHeroInfo extends StatelessWidget {
   });
 
   final StudentProfile profile;
-  final String handle;
+  final String studentCode;
   final int activeCourses;
   final int totalXp;
   final int level;
@@ -11412,6 +12709,9 @@ class _ProfileHeroInfo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final subscriptionLabel = profile.premiumLabel.trim().isEmpty
+        ? 'Bepul a’zo'
+        : profile.premiumLabel.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -11425,7 +12725,7 @@ class _ProfileHeroInfo extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: compact ? 20 : 25,
+                  fontSize: compact ? 18 : 23,
                   height: 1.08,
                   fontWeight: FontWeight.w900,
                 ),
@@ -11441,38 +12741,45 @@ class _ProfileHeroInfo extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          handle,
+          studentCode,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: Colors.white.withValues(alpha: .78),
-            fontSize: 14,
+            fontSize: compact ? 12 : 14,
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 10),
+        SizedBox(height: compact ? 7 : 10),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 12,
+            vertical: compact ? 5 : 7,
+          ),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: .16),
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: Colors.white.withValues(alpha: .18)),
           ),
-          child: const Row(
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              const Icon(
                 Icons.workspace_premium_rounded,
                 color: Color(0xFFFFD166),
                 size: 16,
               ),
-              SizedBox(width: 6),
-              Text(
-                'Premium a’zo',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  subscriptionLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: compact ? 11.5 : 13,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],
@@ -11487,7 +12794,7 @@ class _ProfileHeroInfo extends StatelessWidget {
               _ProfileHeroMetric(
                 icon: Icons.calendar_month_rounded,
                 label: 'A’zo bo‘lgan sana',
-                value: 'Faol profil',
+                value: _profileMemberDate(profile),
               ),
               _ProfileHeroMetric(
                 icon: Icons.menu_book_rounded,
@@ -11521,12 +12828,14 @@ class _ProfileHeroInfo extends StatelessWidget {
 
 class _ProfileHeroMetricStrip extends StatelessWidget {
   const _ProfileHeroMetricStrip({
+    required this.profile,
     required this.activeCourses,
     required this.totalXp,
     required this.level,
     required this.compact,
   });
 
+  final StudentProfile profile;
   final int activeCourses;
   final int totalXp;
   final int level;
@@ -11536,11 +12845,11 @@ class _ProfileHeroMetricStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Expanded(
+        Expanded(
           child: _ProfileHeroMiniMetric(
             icon: Icons.calendar_month_rounded,
             label: 'Sana',
-            value: 'Faol',
+            value: _profileMemberDate(profile),
           ),
         ),
         _ProfileHeroMetricSeparator(compact: compact),
@@ -12417,6 +13726,7 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
 
   final _subjectController = TextEditingController();
   final _messageController = TextEditingController();
+  List<AdminInboxMessage> _history = const [];
 
   @override
   void initState() {
@@ -12426,17 +13736,33 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
       _messageController.text = body;
       _submit();
     });
+    unawaited(_loadHistory());
   }
 
   final _audioRecorder = AudioRecorder();
   Timer? _voiceTimer;
   bool _sending = false;
+  bool _historyLoading = true;
   bool _showAttachmentTray = false;
   bool _recordingVoice = false;
   int _voiceSeconds = 0;
   String _voiceExtension = 'wav';
   String _voiceMimeType = 'audio/wav';
   _ChatAttachmentDraft? _attachment;
+
+  Future<void> _loadHistory() async {
+    try {
+      final history = await _repository.loadStudentSupportMessages();
+      if (!mounted) return;
+      setState(() {
+        _history = history;
+        _historyLoading = false;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() => _historyLoading = false);
+    }
+  }
 
   Future<void> _pickAttachment(String kind) async {
     if (kind == 'voice') {
@@ -12612,7 +13938,17 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
         attachmentSize: _attachment?.size,
       );
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      _subjectController.clear();
+      _messageController.clear();
+      setState(() {
+        _attachment = null;
+        _showAttachmentTray = false;
+      });
+      await _loadHistory();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Murojaat yuborildi.')));
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -12779,6 +14115,52 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
                                 ),
                               ),
                             ),
+                            const SizedBox(height: 16),
+                            if (_historyLoading)
+                              const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: CircularProgressIndicator(),
+                                ),
+                              )
+                            else if (_history.isEmpty)
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(18),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.surface,
+                                  borderRadius: BorderRadius.circular(22),
+                                  border: Border.all(color: AppColors.border),
+                                ),
+                                child: Column(
+                                  children: [
+                                    Icon(
+                                      Icons.mark_chat_unread_outlined,
+                                      color: AppColors.muted.withValues(
+                                        alpha: .7,
+                                      ),
+                                      size: 34,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Hali murojaat yo‘q',
+                                      style: theme.textTheme.titleMedium,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Birinchi xabaringizni pastdan yuboring.',
+                                      textAlign: TextAlign.center,
+                                      style: theme.textTheme.bodyMedium,
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              for (final message in _history)
+                                _SupportHistoryBubble(
+                                  message: message,
+                                  language: language,
+                                ),
                           ],
                         ),
                       ),
@@ -13017,6 +14399,216 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+String _formatSupportMessageTime(DateTime value) {
+  final local = value.toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${two(local.day)}.${two(local.month)}.${local.year} ${two(local.hour)}:${two(local.minute)}';
+}
+
+class _SupportHistoryBubble extends StatelessWidget {
+  const _SupportHistoryBubble({required this.message, required this.language});
+
+  final AdminInboxMessage message;
+  final AppLanguage language;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasReply = (message.adminReply ?? '').trim().isNotEmpty;
+    final subject = message.subject.trim().isEmpty
+        ? _attachmentKindLabel(message.messageKind)
+        : message.subject.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 420),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.primaryBlue,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(18),
+                  topRight: Radius.circular(18),
+                  bottomLeft: Radius.circular(18),
+                  bottomRight: Radius.circular(6),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primaryBlue.withValues(alpha: .14),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          subject,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        hasReply
+                            ? Icons.mark_chat_read_rounded
+                            : Icons.schedule_rounded,
+                        color: Colors.white.withValues(alpha: .82),
+                        size: 18,
+                      ),
+                    ],
+                  ),
+                  if (message.body.trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      message.body,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white.withValues(alpha: .92),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                  if (message.hasAttachment) ...[
+                    const SizedBox(height: 10),
+                    InkWell(
+                      onTap: () => unawaited(
+                        _openChatAttachment(message.attachmentUrl!),
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: .14),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .16),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              message.isImage
+                                  ? Icons.image_outlined
+                                  : message.isVideo
+                                  ? Icons.videocam_outlined
+                                  : message.isAudio
+                                  ? Icons.mic_none_rounded
+                                  : Icons.attach_file_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                message.attachmentName?.trim().isNotEmpty ==
+                                        true
+                                    ? message.attachmentName!
+                                    : _attachmentKindLabel(message.messageKind),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.open_in_new_rounded,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Text(
+                    _formatSupportMessageTime(message.createdAt),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.white.withValues(alpha: .66),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (hasReply) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 420),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(18),
+                    topRight: Radius.circular(18),
+                    bottomRight: Radius.circular(18),
+                    bottomLeft: Radius.circular(6),
+                  ),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.support_agent_rounded,
+                          color: AppColors.primaryBlue,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Admin javobi',
+                            style: theme.textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        if (message.repliedAt != null)
+                          Text(
+                            _formatSupportMessageTime(message.repliedAt!),
+                            style: theme.textTheme.labelSmall,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      message.adminReply!.trim(),
+                      style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

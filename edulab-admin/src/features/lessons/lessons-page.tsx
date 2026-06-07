@@ -40,10 +40,11 @@ import {
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 
-function Badge({ variant, children, className }: { variant: "success" | "slate" | "warning" | "blue" | "indigo" | "fuchsia" | "purple"; children: React.ReactNode; className?: string }) {
+function Badge({ variant, children, className }: { variant: "success" | "slate" | "destructive" | "warning" | "blue" | "indigo" | "fuchsia" | "purple"; children: React.ReactNode; className?: string }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] uppercase tracking-wider font-bold ${
       variant === "success" ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20" :
+      variant === "destructive" ? "bg-red-500/10 text-red-600 border border-red-500/20" :
       variant === "warning" ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" :
       variant === "blue" ? "bg-blue-500/10 text-blue-600 border border-blue-500/20" :
       variant === "indigo" ? "bg-indigo-500/10 text-indigo-600 border border-indigo-500/20" :
@@ -292,7 +293,7 @@ export function LessonsPage() {
 
         <Button
           onClick={openCreateModal}
-          className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-full px-6 h-11 transition-all hover:scale-105 active:scale-95"
+          className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-lg px-5 h-11 transition-all "
         >
           <Plus className="size-5" />
           Yangi Material
@@ -300,7 +301,7 @@ export function LessonsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6 mb-8">
-        <div className="md:col-span-4 lg:col-span-4 bg-white/80 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-5 flex flex-col justify-center gap-4">
+        <div className="md:col-span-4 lg:col-span-4 bg-white border border-slate-200 shadow-sm rounded-lg p-5 flex flex-col justify-center gap-4">
           <div className="space-y-2">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
               Modulni tanlang
@@ -308,7 +309,7 @@ export function LessonsPage() {
             <Select
               value={filterModuleId}
               onChange={(e) => setFilterModuleId(e.target.value)}
-              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-xl font-bold text-slate-700"
+              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-lg font-bold text-slate-700"
             >
               <option value="">Barcha Modullar</option>
               {modules?.map((m: any) => (
@@ -326,7 +327,7 @@ export function LessonsPage() {
               value={filterTopicId}
               onChange={(e) => setFilterTopicId(e.target.value)}
               disabled={!filterModuleId || isTopicsLoading}
-              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-xl font-bold text-slate-700"
+              className="h-11 w-full bg-slate-50/50 border-transparent focus:bg-white rounded-lg font-bold text-slate-700"
             >
               <option value="">Barcha Mavzular</option>
               {topics?.map((t: any) => (
@@ -339,7 +340,7 @@ export function LessonsPage() {
         </div>
 
         <div className="md:col-span-8 lg:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mb-2">
               <Layers className="size-5" />
             </div>
@@ -348,7 +349,7 @@ export function LessonsPage() {
               Jami
             </p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center mb-2">
               <FileJson className="size-5" />
             </div>
@@ -357,7 +358,7 @@ export function LessonsPage() {
               PDF Fayllar
             </p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-2">
               <FileText className="size-5" />
             </div>
@@ -366,7 +367,7 @@ export function LessonsPage() {
               Matn Darslar
             </p>
           </div>
-          <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-4 flex flex-col justify-center items-center text-center">
+          <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-4 flex flex-col justify-center items-center text-center">
             <div className="size-10 rounded-full bg-fuchsia-50 text-fuchsia-600 flex items-center justify-center mb-2">
               <LinkIcon className="size-5" />
             </div>
@@ -378,12 +379,12 @@ export function LessonsPage() {
         </div>
       </div>
 
-      <div className="bg-white/80 backdrop-blur-xl border border-white shadow-sm rounded-2xl p-3 flex flex-wrap items-center gap-3 mb-8">
+      <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-3 flex flex-wrap items-center gap-3 mb-8">
         <div className="relative flex-1 min-w-[250px]">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-slate-400" />
           <Input
             placeholder="Materiallarni izlash..."
-            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 rounded-xl transition-all"
+            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 rounded-lg transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -392,7 +393,7 @@ export function LessonsPage() {
         <Select
           value={typeFilter}
           onChange={(e: any) => setTypeFilter(e.target.value)}
-          className="h-12 w-full md:w-[180px] bg-slate-50/50 border-transparent rounded-xl font-medium text-slate-700"
+          className="h-12 w-full md:w-[180px] bg-slate-50/50 border-transparent rounded-lg font-medium text-slate-700"
         >
           <option value="all">Barcha Turlar</option>
           <option value="pdf">Faqat PDF Fayllar</option>
@@ -403,15 +404,15 @@ export function LessonsPage() {
 
       {/* Premium Table View */}
       {isLessonsLoading ? (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 flex flex-col gap-4">
             {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-16 w-full rounded-2xl" />
+              <Skeleton key={i} className="h-16 w-full rounded-lg" />
             ))}
           </div>
         </Card>
       ) : !filteredLessons.length ? (
-        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white/50 backdrop-blur-sm rounded-3xl border border-white border-dashed">
+        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white rounded-lg border border-dashed border-slate-200">
           <div className="size-24 bg-blue-50 rounded-full flex items-center justify-center mb-6">
             <BookOpen className="size-10 text-blue-500" />
           </div>
@@ -423,13 +424,13 @@ export function LessonsPage() {
           </p>
           <Button
             onClick={openCreateModal}
-            className="rounded-full px-8 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide"
+            className="rounded-lg px-6 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide"
           >
             <Plus className="size-5 mr-2" /> Birinchi Materialni Qo'shish
           </Button>
         </div>
       ) : (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden bg-white/80 backdrop-blur-xl animate-in fade-in-50 duration-200">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden bg-white animate-in fade-in-50 duration-200">
           <div className="overflow-x-auto edulab-scrollbar">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-[10px] font-black uppercase text-slate-400 tracking-wider border-b border-slate-100">
@@ -467,7 +468,7 @@ export function LessonsPage() {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-4">
                           <div
-                            className={`size-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm border ${
+                            className={`size-12 rounded-lg flex items-center justify-center shrink-0 shadow-sm border ${
                               visualKind === "pdf"
                                 ? "bg-red-50 border-red-100 text-red-600"
                                 : visualKind === "text"
@@ -529,7 +530,7 @@ export function LessonsPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="size-9 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                              className="size-9 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
                               onClick={() =>
                                 window.open(lesson.file_url, "_blank")
                               }
@@ -541,7 +542,7 @@ export function LessonsPage() {
                             onClick={() => openEditModal(lesson)}
                             variant="ghost"
                             size="icon"
-                            className="size-9 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                            className="size-9 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"
                           >
                             <Pencil className="size-4.5" />
                           </Button>
@@ -551,7 +552,7 @@ export function LessonsPage() {
                             }
                             variant="ghost"
                             size="icon"
-                            className="size-9 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50"
+                            className="size-9 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
                           >
                             <Trash2 className="size-4.5" />
                           </Button>
@@ -638,7 +639,7 @@ export function LessonsPage() {
                             setFormModuleId(e.target.value);
                             setFormTopicId("");
                           }}
-                          className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700"
+                          className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700"
                         >
                           <option value="" disabled>
                             Modulni tanlang
@@ -660,7 +661,7 @@ export function LessonsPage() {
                           value={formTopicId}
                           onChange={(e) => setFormTopicId(e.target.value)}
                           disabled={!formModuleId}
-                          className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700 disabled:opacity-50"
+                          className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold text-slate-700 disabled:opacity-50"
                         >
                           <option value="" disabled>
                             Avval modulni tanlang
@@ -681,7 +682,7 @@ export function LessonsPage() {
                           <button
                             type="button"
                             onClick={() => handleKindChange("pdf")}
-                            className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${kind === "pdf" ? "bg-red-50 border-red-200 text-red-600 scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50"}`}
+                            className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${kind === "pdf" ? "bg-red-50 border-red-200 text-red-600 scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50"}`}
                           >
                             <FileJson className="size-6 mb-2" />
                             <span className="text-[10px] font-black uppercase tracking-wider">
@@ -691,7 +692,7 @@ export function LessonsPage() {
                           <button
                             type="button"
                             onClick={() => handleKindChange("text")}
-                            className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${kind === "text" ? "bg-blue-50 border-blue-200 text-blue-600 scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50"}`}
+                            className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${kind === "text" ? "bg-blue-50 border-blue-200 text-blue-600 scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50"}`}
                           >
                             <FileText className="size-6 mb-2" />
                             <span className="text-[10px] font-black uppercase tracking-wider">
@@ -701,7 +702,7 @@ export function LessonsPage() {
                           <button
                             type="button"
                             onClick={() => handleKindChange("link")}
-                            className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all ${kind === "link" ? "bg-fuchsia-50 border-fuchsia-200 text-fuchsia-600 scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50"}`}
+                            className={`flex flex-col items-center justify-center p-4 rounded-lg border-2 transition-all ${kind === "link" ? "bg-fuchsia-50 border-fuchsia-200 text-fuchsia-600 scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200 hover:bg-slate-50"}`}
                           >
                             <LinkIcon className="size-6 mb-2" />
                             <span className="text-[10px] font-black uppercase tracking-wider">
@@ -719,7 +720,7 @@ export function LessonsPage() {
                           placeholder="Masalan: JavaScript darslik PDF"
                           value={title}
                           onChange={(e) => setTitle(e.target.value)}
-                          className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-medium transition-all"
+                          className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-medium transition-all"
                         />
                       </div>
                     </div>
@@ -737,7 +738,7 @@ export function LessonsPage() {
                             placeholder="Dars matnini bu yerga kiriting..."
                             value={body}
                             onChange={(e) => setBody(e.target.value)}
-                            className="h-64 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 py-4 text-base font-medium transition-all resize-none"
+                            className="h-64 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 py-4 text-base font-medium transition-all resize-none"
                           />
                         </div>
                       ) : (
@@ -762,7 +763,7 @@ export function LessonsPage() {
                               }
                               value={fileUrl}
                               onChange={(e) => setFileUrl(e.target.value)}
-                              className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 pl-12 text-base font-medium transition-all"
+                              className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 pl-12 text-base font-medium transition-all"
                             />
                           </div>
                         </div>
@@ -780,7 +781,7 @@ export function LessonsPage() {
                               setOrderIndex(Number(e.target.value))
                             }
                             min={1}
-                            className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold"
+                            className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold"
                           />
                         </div>
                         <div className="grid gap-2">
@@ -794,7 +795,7 @@ export function LessonsPage() {
                               setDurationMinutes(Number(e.target.value))
                             }
                             min={1}
-                            className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold"
+                            className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold"
                           />
                         </div>
                       </div>
@@ -831,7 +832,7 @@ export function LessonsPage() {
                   </Button>
                   <Button
                     onClick={() => setStep((s) => s + 1)}
-                    className="rounded-full px-8 h-12 font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20"
+                    className="rounded-lg px-6 h-12 font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20"
                   >
                     Keyingisi <ArrowRight className="size-4 ml-2" />
                   </Button>
@@ -851,9 +852,9 @@ export function LessonsPage() {
                   O'quvchi Ko'rinishi
                 </p>
 
-                <div className="w-full bg-white rounded-[2rem] shadow-2xl overflow-hidden p-8 flex flex-col items-center text-center transition-all duration-500 hover:scale-[1.02]">
+                <div className="w-full bg-white rounded-lg shadow-xl overflow-hidden p-8 flex flex-col items-center text-center transition-all duration-500">
                   <div
-                    className={`size-24 rounded-[2rem] flex items-center justify-center shadow-inner mb-6 ${
+                    className={`size-24 rounded-lg flex items-center justify-center shadow-inner mb-6 ${
                       kind === "pdf"
                         ? "bg-red-50 text-red-500"
                         : kind === "text"
@@ -892,7 +893,7 @@ export function LessonsPage() {
                     vaqti
                   </p>
 
-                  <div className="w-full h-12 rounded-xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400 text-sm font-bold">
+                  <div className="w-full h-12 rounded-lg bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400 text-sm font-bold">
                     Material kontenti zonasi
                   </div>
                 </div>

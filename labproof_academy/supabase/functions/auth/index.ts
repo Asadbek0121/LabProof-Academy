@@ -271,7 +271,6 @@ async function verifyTelegramCode(request: Request) {
       user_metadata: {
         full_name: session.full_name,
         phone: session.phone,
-        role: "student",
       },
     });
 
@@ -297,12 +296,11 @@ async function verifyTelegramCode(request: Request) {
   }
 
   if (authUser) {
-    const role = authUser.user_metadata?.role ?? "student";
     await admin.from("profiles").upsert({
       id: authUser.id,
       full_name: session.full_name,
       phone: session.phone,
-      role,
+      role: "student",
       telegram_chat_id: session.chat_id ?? null,
       telegram_last_seen_at: session.chat_id ? new Date().toISOString() : null,
     });
@@ -338,7 +336,6 @@ async function resetPasswordForExistingUser(
       ...(existingUser.user_metadata ?? {}),
       full_name: session.full_name,
       phone: session.phone,
-      role: existingUser.user_metadata?.role ?? "student",
     },
   });
 
@@ -349,11 +346,12 @@ async function resetPasswordForExistingUser(
     );
   }
 
+  const profile = await getProfile(existingUser.id);
   await admin.from("profiles").upsert({
     id: existingUser.id,
     full_name: session.full_name,
     phone: session.phone,
-    role: existingUser.user_metadata?.role ?? "student",
+    role: profile?.role ?? "student",
     telegram_chat_id: session.chat_id ?? null,
     telegram_last_seen_at: session.chat_id ? new Date().toISOString() : null,
   });
@@ -450,7 +448,7 @@ async function updateProfile(request: Request) {
   }
 
   const currentProfile = await getProfile(user.id);
-  const role = currentProfile?.role ?? currentMetadata.role ?? "student";
+  const role = currentProfile?.role ?? "student";
   const { error: profileError } = await admin.from("profiles").upsert({
     id: user.id,
     full_name: fullName,
@@ -537,6 +535,8 @@ async function telegramWebhook(request: Request) {
 
   if (update.message?.text?.startsWith("/start")) {
     const chatId = update.message.chat.id;
+    await saveTelegramStartContact(update.message);
+
     const sessionId = String(update.message.text).split(" ")[1] ?? "";
     const session = await getSession(sessionId);
 
@@ -612,6 +612,7 @@ async function telegramWebhook(request: Request) {
         subject: "Telegram orqali yangi xabar",
         body: String(update.message.text).trim(),
         messageKind: "text",
+        metadata: await telegramSenderMetadata(update.message),
         createdAt: update.message.date
           ? new Date(update.message.date * 1000).toISOString()
           : undefined,
@@ -740,6 +741,7 @@ async function telegramWebhook(request: Request) {
         attachmentName: parsed.attachmentName,
         attachmentMime: parsed.attachmentMime,
         attachmentSize: parsed.attachmentSize,
+        metadata: await telegramSenderMetadata(update.message),
         createdAt: update.message.date
           ? new Date(update.message.date * 1000).toISOString()
           : undefined,
@@ -1213,6 +1215,103 @@ async function parseTelegramIncomingMessage(message: any) {
   return null;
 }
 
+async function telegramSenderMetadata(message: any) {
+  const from = message?.from ?? {};
+  const chatId = message?.chat?.id ? String(message.chat.id) : "";
+  const lastSeenAt = message?.date
+    ? new Date(Number(message.date) * 1000).toISOString()
+    : new Date().toISOString();
+  let photoFileId = "";
+
+  if (chatId) {
+    try {
+      const chat = await telegram("getChat", { chat_id: chatId });
+      photoFileId =
+        chat?.ok && chat.result?.photo
+          ? String(chat.result.photo.big_file_id || chat.result.photo.small_file_id || "")
+          : "";
+    } catch (error) {
+      console.error("Telegram profil rasmini olishda xatolik:", error);
+    }
+  }
+
+  return {
+    telegram_chat_id: chatId || null,
+    telegram_user_id: from?.id ? String(from.id) : null,
+    telegram_username: from?.username ?? null,
+    telegram_first_name: from?.first_name ?? null,
+    telegram_last_name: from?.last_name ?? null,
+    telegram_photo_file_id: photoFileId || null,
+    telegram_last_seen_at: lastSeenAt,
+  };
+}
+
+async function saveTelegramStartContact(message: any) {
+  const chatId = message?.chat?.id ? String(message.chat.id) : "";
+  if (!chatId) return;
+
+  const metadata = await telegramSenderMetadata(message);
+  const linkedProfile = await getProfileByChatId(chatId);
+  const senderName = linkedProfile?.full_name || telegramSenderName(message?.from);
+  const now = metadata.telegram_last_seen_at
+    ? String(metadata.telegram_last_seen_at)
+    : new Date().toISOString();
+
+  if (linkedProfile?.id) {
+    await admin
+      .from("profiles")
+      .update({
+        telegram_user_id:
+          metadata.telegram_user_id ?? linkedProfile.telegram_user_id ?? null,
+        telegram_username:
+          metadata.telegram_username ?? linkedProfile.telegram_username ?? null,
+        telegram_last_seen_at: now,
+      })
+      .eq("id", linkedProfile.id);
+  }
+
+  const { data: existing } = await admin
+    .from("admin_inbox_messages")
+    .select("id")
+    .eq("source", "telegram")
+    .eq("telegram_chat_id", chatId)
+    .eq("subject", "Telegram foydalanuvchi botni boshladi")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const payload = {
+    sender_user_id: linkedProfile?.id ?? null,
+    sender_name: senderName,
+    sender_phone: linkedProfile?.phone ?? "",
+    body: "/start bosildi. Telegram profil ma'lumotlari yangilandi.",
+    metadata,
+    created_at: now,
+    is_read: false,
+  };
+
+  if (existing?.id) {
+    await admin
+      .from("admin_inbox_messages")
+      .update(payload)
+      .eq("id", existing.id);
+    return;
+  }
+
+  await saveAdminInboxMessage({
+    source: "telegram",
+    senderUserId: linkedProfile?.id,
+    senderName,
+    senderPhone: linkedProfile?.phone ?? "",
+    telegramChatId: chatId,
+    subject: "Telegram foydalanuvchi botni boshladi",
+    body: payload.body,
+    messageKind: "text",
+    metadata,
+    createdAt: now,
+  });
+}
+
 async function saveAdminInboxMessage({
   source,
   senderUserId,
@@ -1226,6 +1325,7 @@ async function saveAdminInboxMessage({
   attachmentName,
   attachmentMime,
   attachmentSize,
+  metadata,
   createdAt,
 }: {
   source: "telegram" | "student_app" | "system";
@@ -1240,6 +1340,7 @@ async function saveAdminInboxMessage({
   attachmentName?: string | null;
   attachmentMime?: string | null;
   attachmentSize?: number | null;
+  metadata?: Record<string, unknown>;
   createdAt?: string | null;
 }) {
   await admin.from("admin_inbox_messages").insert({
@@ -1255,6 +1356,7 @@ async function saveAdminInboxMessage({
     attachment_name: attachmentName ?? null,
     attachment_mime: attachmentMime ?? null,
     attachment_size: attachmentSize ?? null,
+    metadata: metadata ?? {},
     created_at: createdAt ?? undefined,
   });
 }

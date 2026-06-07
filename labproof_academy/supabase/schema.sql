@@ -53,6 +53,7 @@ create table if not exists public.lessons (
   body text,
   file_url text,
   duration_seconds int not null default 0,
+  chapters jsonb not null default '[]'::jsonb,
   order_index int not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

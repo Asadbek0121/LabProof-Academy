@@ -29,7 +29,10 @@ class SupabaseAcademyRepository {
   Future<StudentDashboardData> loadStudentDashboard() async {
     final user = await _currentUserOrThrow();
 
-    final profile = await _loadProfile(user);
+    final baseProfile = await _loadProfile(user);
+    final profile = baseProfile.copyWith(
+      premiumLabel: await _loadActivePremiumLabel(user.id),
+    );
     final modules = await _loadModules(user.id);
     final results = await _supabase
         .from('module_results')
@@ -303,6 +306,26 @@ class SupabaseAcademyRepository {
         .toList();
   }
 
+  Future<List<AdminInboxMessage>> loadStudentSupportMessages({
+    int limit = 12,
+  }) async {
+    final user = await _currentUserOrThrow();
+    final rows = await _supabase
+        .from('admin_inbox_messages')
+        .select(
+          'id, source, sender_user_id, sender_name, sender_phone, telegram_chat_id, subject, body, is_read, admin_reply, replied_at, created_at, message_kind, attachment_url, attachment_name, attachment_mime, attachment_size, admin_read_at, recipient_read_at',
+        )
+        .eq('sender_user_id', user.id)
+        .eq('source', 'student_app')
+        .order('created_at', ascending: false)
+        .limit(limit);
+
+    return (rows as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .map(AdminInboxMessage.fromMap)
+        .toList();
+  }
+
   Future<int> loadAdminUnreadInboxCount() async {
     final rows = await _supabase
         .from('admin_inbox_messages')
@@ -523,6 +546,62 @@ class SupabaseAcademyRepository {
     return _loadProfile(user);
   }
 
+  Future<Map<String, List<Map<String, dynamic>>>> loadStudentBilling() async {
+    final user = await _currentUserOrThrow();
+
+    Future<List<Map<String, dynamic>>> readRows(
+      String table,
+      String select,
+    ) async {
+      try {
+        final rows = await _supabase.from(table).select(select);
+        return (rows as List<dynamic>).cast<Map<String, dynamic>>();
+      } on Object {
+        return const <Map<String, dynamic>>[];
+      }
+    }
+
+    Future<List<Map<String, dynamic>>> readUserRows(
+      String table,
+      String select,
+    ) async {
+      try {
+        final rows = await _supabase
+            .from(table)
+            .select(select)
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false);
+        return (rows as List<dynamic>).cast<Map<String, dynamic>>();
+      } on Object {
+        return const <Map<String, dynamic>>[];
+      }
+    }
+
+    final subscriptions = await readUserRows(
+      'subscriptions',
+      'id, plan_key, billing_interval, status, amount, currency, current_period_start, current_period_end, created_at',
+    );
+    final legacySubscriptions = await readUserRows(
+      'user_subscriptions',
+      'id, status, starts_at, ends_at, created_at, subscription_plans(title, price_label, duration_months)',
+    );
+    final transactions = await readUserRows(
+      'transactions',
+      'id, provider, amount, currency, status, created_at',
+    );
+    final plans = await readRows(
+      'subscription_plans',
+      'id, title, duration_months, price_label, is_active, created_at',
+    );
+
+    return {
+      'subscriptions': subscriptions,
+      'legacySubscriptions': legacySubscriptions,
+      'transactions': transactions,
+      'plans': plans.where((row) => row['is_active'] != false).toList(),
+    };
+  }
+
   Future<String> uploadProfileAvatar({
     required Uint8List bytes,
     required String extension,
@@ -651,6 +730,37 @@ class SupabaseAcademyRepository {
     return _supabase.storage.from('chat-attachments').getPublicUrl(path);
   }
 
+  Future<String> uploadCommunityImage({
+    required Uint8List bytes,
+    required String extension,
+    String? fileName,
+  }) async {
+    final user = await _currentUserOrThrow();
+    final safeExtension = extension.toLowerCase().replaceAll('.', '');
+    final rawName = (fileName ?? 'community-image').replaceAll(
+      RegExp(r'[^a-zA-Z0-9._-]'),
+      '_',
+    );
+    final sanitizedName = rawName.endsWith('.$safeExtension')
+        ? rawName.substring(0, rawName.length - safeExtension.length - 1)
+        : rawName;
+    final path =
+        '${user.id}/community_${DateTime.now().millisecondsSinceEpoch}_$sanitizedName.$safeExtension';
+
+    await _supabase.storage
+        .from('chat-attachments')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+            upsert: true,
+            contentType: _contentTypeForExtension(safeExtension),
+          ),
+        );
+
+    return _supabase.storage.from('chat-attachments').getPublicUrl(path);
+  }
+
   Future<String?> _tryCloudinaryUpload({
     required Uint8List bytes,
     required String extension,
@@ -704,13 +814,7 @@ class SupabaseAcademyRepository {
   }
 
   Future<StudentProfile> _loadProfile(User user) async {
-    final row = await _supabase
-        .from('profiles')
-        .select(
-          'id, full_name, phone, role, avatar_url, gender, age, region, district, mahalla, street',
-        )
-        .eq('id', user.id)
-        .maybeSingle();
+    final row = await _loadProfileRow(user.id);
 
     final metadata = user.userMetadata ?? {};
     final roleName = (row?['role'] ?? 'student').toString();
@@ -723,7 +827,9 @@ class SupabaseAcademyRepository {
           .toString(),
       phone: rowPhone.isNotEmpty ? rowPhone : authPhone,
       role: roleName == 'admin' ? UserRole.admin : UserRole.student,
+      studentCode: (row?['student_code'] ?? '').toString(),
       avatarUrl: (row?['avatar_url'] ?? '').toString(),
+      createdAt: _parseDate(row?['created_at']),
       gender: (row?['gender'] ?? '').toString(),
       age: (row?['age'] as num?)?.round(),
       region: (row?['region'] ?? '').toString(),
@@ -731,6 +837,68 @@ class SupabaseAcademyRepository {
       mahalla: (row?['mahalla'] ?? '').toString(),
       street: (row?['street'] ?? '').toString(),
     );
+  }
+
+  Future<Map<String, dynamic>?> _loadProfileRow(String userId) async {
+    const fullColumns =
+        'id, full_name, phone, role, student_code, avatar_url, gender, age, region, district, mahalla, street, created_at';
+    const fallbackColumns =
+        'id, full_name, phone, role, avatar_url, gender, age, region, district, mahalla, street, created_at';
+
+    try {
+      return await _supabase
+          .from('profiles')
+          .select(fullColumns)
+          .eq('id', userId)
+          .maybeSingle();
+    } on PostgrestException catch (error) {
+      if (!error.message.toLowerCase().contains('student_code')) rethrow;
+      return _supabase
+          .from('profiles')
+          .select(fallbackColumns)
+          .eq('id', userId)
+          .maybeSingle();
+    }
+  }
+
+  Future<String> _loadActivePremiumLabel(String userId) async {
+    try {
+      final subscription = await _supabase
+          .from('subscriptions')
+          .select('plan_key, billing_interval, status')
+          .eq('user_id', userId)
+          .eq('status', 'active')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (subscription != null) {
+        final plan = (subscription['plan_key'] ?? 'Premium').toString().trim();
+        final interval = (subscription['billing_interval'] ?? '').toString();
+        return interval.isEmpty ? plan : '$plan · $interval';
+      }
+    } on Object {
+      // Older databases may only have the legacy subscription tables.
+    }
+
+    try {
+      final legacy = await _supabase
+          .from('user_subscriptions')
+          .select('status, subscription_plans(title)')
+          .eq('user_id', userId)
+          .eq('status', 'active')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (legacy != null) {
+        return (legacy['subscription_plans']?['title'] ?? 'Premium')
+            .toString()
+            .trim();
+      }
+    } on Object {
+      // Keep profile usable if subscription tables are not exposed yet.
+    }
+
+    return '';
   }
 
   Future<List<AcademyModule>> _loadModules(String userId) async {
@@ -2462,6 +2630,7 @@ class SupabaseAcademyRepository {
         .from('community_posts')
         .insert({
           'author_id': user.id,
+          'title': _communityPostTitle(content),
           'content': content,
           'category': category,
           'attachments': attachments ?? [],
@@ -2661,11 +2830,11 @@ class SupabaseAcademyRepository {
         );
       }).toList();
     } catch (error) {
-      return [];
+      rethrow;
     }
   }
 
-  Future<CommunityPost?> createTwitterPost({
+  Future<CommunityPost> createTwitterPost({
     required String content,
     List<String>? attachments,
     String? replyToPostId,
@@ -2676,6 +2845,7 @@ class SupabaseAcademyRepository {
         .from('community_posts')
         .insert({
           'author_id': user.id,
+          'title': _communityPostTitle(content),
           'content': content,
           'attachments': attachments ?? [],
           'likes_count': 0,
@@ -2708,6 +2878,14 @@ class SupabaseAcademyRepository {
               .toList() ??
           [],
     );
+  }
+
+  String _communityPostTitle(String content) {
+    final normalized = content.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) return 'Community post';
+    return normalized.length <= 80
+        ? normalized
+        : '${normalized.substring(0, 77)}...';
   }
 
   Future<void> updateTwitterPost(

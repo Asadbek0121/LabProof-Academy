@@ -54,12 +54,12 @@ export function ConfirmDialog({
   const Icon = config.icon;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm animate-in fade-in duration-200 dark:bg-slate-950/65">
       <div
         role="alertdialog"
         aria-modal="true"
         aria-label={title}
-        className="w-full max-w-md rounded-2xl border border-border bg-white p-6 shadow-xl animate-in zoom-in-95 duration-200"
+        className="w-full max-w-md rounded-lg border border-border bg-white p-6 shadow-xl animate-in zoom-in-95 duration-200 dark:border-slate-800 dark:bg-slate-900"
       >
         <div className="flex gap-4">
           <div
@@ -71,9 +71,9 @@ export function ConfirmDialog({
             <Icon className={cn("size-6", config.iconColor)} />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-bold text-slate-950">{title}</h3>
+            <h3 className="text-lg font-bold text-slate-950 dark:text-slate-100">{title}</h3>
             {description && (
-              <p className="mt-2 text-sm text-slate-500 leading-relaxed">
+              <p className="mt-2 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
                 {description}
               </p>
             )}

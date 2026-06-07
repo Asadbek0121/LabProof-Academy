@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Edit, Plus, Tags, Trash2 } from "lucide-react";
+import { CheckCircle2, Edit, FolderTree, Plus, Tags, Trash2 } from "lucide-react";
 
 export function CategoriesPage() {
   const [name, setName] = useState("");
@@ -79,21 +79,75 @@ export function CategoriesPage() {
 
   return (
     <>
-      <PageHeader title="Kurs Kategoriyalari" current="Kategoriyalar" />
+      <PageHeader
+        title="Kurs kategoriyalari"
+        current="Kategoriyalar"
+        action={
+          <Button
+            onClick={() => {
+              setEditingId(null);
+              setName("");
+              setDescription("");
+            }}
+          >
+            <Plus className="size-4" />
+            Yangi kategoriya
+          </Button>
+        }
+      />
+
+      <div className="mb-5 grid gap-4 md:grid-cols-3">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+              <Tags className="size-5" />
+            </span>
+            <div>
+              <p className="text-xs font-extrabold uppercase tracking-wide text-slate-400">Jami</p>
+              <p className="text-2xl font-black text-slate-950">{categories?.length ?? 0}</p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+              <CheckCircle2 className="size-5" />
+            </span>
+            <div>
+              <p className="text-xs font-extrabold uppercase tracking-wide text-slate-400">Student app</p>
+              <p className="text-sm font-bold text-slate-800">Modul va kurslarga ulanadi</p>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <span className="flex size-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+              <FolderTree className="size-5" />
+            </span>
+            <div>
+              <p className="text-xs font-extrabold uppercase tracking-wide text-slate-400">Tartib</p>
+              <p className="text-sm font-bold text-slate-800">Kategoriyalar nomi aniq bo‘lsin</p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_400px]">
         {/* Categories list */}
-        <Card className="shadow-soft">
+        <Card className="overflow-hidden">
           <CardHeader>
-            <CardTitle className="text-lg font-extrabold flex items-center gap-2">
-              <Tags className="size-5 text-primary" />
-              Mavjud Kategoriyalar
-            </CardTitle>
+            <div>
+              <CardTitle className="flex items-center gap-2 text-lg font-extrabold">
+                <Tags className="size-5 text-primary" />
+                Mavjud kategoriyalar
+              </CardTitle>
+              <CardDescription>Student app modullari shu kategoriyalar bilan guruhlanadi.</CardDescription>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto edulab-scrollbar">
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-bold uppercase text-slate-500">
+                <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs font-extrabold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-5 py-4">Nomi</th>
                     <th className="px-5 py-4">Tavsifi</th>
@@ -110,7 +164,7 @@ export function CategoriesPage() {
                     </tr>
                   ) : categories && categories.length > 0 ? (
                     categories.map((c) => (
-                      <tr key={c.id} className="border-t border-border hover:bg-slate-50/50">
+                      <tr key={c.id} className="border-t border-slate-100 hover:bg-blue-50/40">
                         <td className="px-5 py-4 font-bold text-slate-800">{c.name}</td>
                         <td className="px-5 py-4 text-slate-600 max-w-[280px] truncate">{c.description || "-"}</td>
                         <td className="px-5 py-4 text-center text-slate-500">
@@ -151,11 +205,16 @@ export function CategoriesPage() {
         </Card>
 
         {/* Create/Edit form */}
-        <Card className="shadow-soft h-fit">
+        <Card className="h-fit">
           <CardHeader>
-            <CardTitle className="text-lg font-extrabold">
-              {editingId ? "Kategoriyani tahrirlash" : "Yangi kategoriya qo'shish"}
-            </CardTitle>
+            <div>
+              <CardTitle className="text-lg font-extrabold">
+                {editingId ? "Kategoriyani tahrirlash" : "Yangi kategoriya qo'shish"}
+              </CardTitle>
+              <CardDescription>
+                Nom va tavsif student appdagi learning oqimida tushunarli ko‘rinadi.
+              </CardDescription>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
@@ -169,11 +228,11 @@ export function CategoriesPage() {
 
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-2">Kategoriya tavsifi</label>
-              <textarea
+              <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Kategoriya haqida qisqacha ma'lumot..."
-                className="w-full h-24 p-3 rounded-2xl border border-border text-sm resize-none focus:outline-none focus:border-blue-500"
+                className="h-28"
               />
             </div>
 

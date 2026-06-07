@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./dark-overrides.css";
 import { AppProviders } from "@/components/providers/app-providers";
 
 export const metadata: Metadata = {
@@ -19,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="uz" suppressHydrationWarning>
-      <body className="min-h-screen bg-white antialiased">
+      <body className="min-h-screen bg-white antialiased dark:bg-slate-950">
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

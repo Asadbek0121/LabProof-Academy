@@ -17,7 +17,10 @@ class StudentProfile {
     required this.fullName,
     required this.phone,
     required this.role,
+    this.studentCode = '',
     this.avatarUrl = '',
+    this.createdAt,
+    this.premiumLabel = '',
     this.gender = '',
     this.age,
     this.region = '',
@@ -30,7 +33,10 @@ class StudentProfile {
   final String fullName;
   final String phone;
   final UserRole role;
+  final String studentCode;
   final String avatarUrl;
+  final DateTime? createdAt;
+  final String premiumLabel;
   final String gender;
   final int? age;
   final String region;
@@ -97,7 +103,10 @@ class StudentProfile {
     String? fullName,
     String? phone,
     UserRole? role,
+    String? studentCode,
     String? avatarUrl,
+    DateTime? createdAt,
+    String? premiumLabel,
     String? gender,
     int? age,
     bool clearAge = false,
@@ -111,7 +120,10 @@ class StudentProfile {
       fullName: fullName ?? this.fullName,
       phone: phone ?? this.phone,
       role: role ?? this.role,
+      studentCode: studentCode ?? this.studentCode,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      createdAt: createdAt ?? this.createdAt,
+      premiumLabel: premiumLabel ?? this.premiumLabel,
       gender: gender ?? this.gender,
       age: clearAge ? null : (age ?? this.age),
       region: region ?? this.region,

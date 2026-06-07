@@ -10,7 +10,7 @@ export function EmptyState({
 }) {
   return (
     <Card className="flex min-h-56 flex-col items-center justify-center gap-3 p-8 text-center">
-      <div className="flex size-12 items-center justify-center rounded-2xl bg-blue-50 text-primary">
+      <div className="flex size-12 items-center justify-center rounded-lg bg-blue-50 text-primary">
         <FileSearch className="size-5" />
       </div>
       <div>

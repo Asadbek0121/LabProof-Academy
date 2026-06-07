@@ -18,7 +18,7 @@ export async function createCertificateAction(input: unknown) {
   await assertAdmin();
   const payload = certificateSchema.parse(input);
   const supabase = await createClient();
-  const certificateId = `CERT-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const certificateId = crypto.randomUUID();
   const verifyUrl = absoluteUrl(`/certificates/verify/${certificateId}`);
   const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
     width: 320,
@@ -30,7 +30,7 @@ export async function createCertificateAction(input: unknown) {
   });
 
   const { error } = await supabase.from("certificates").insert({
-    id: crypto.randomUUID(),
+    id: certificateId,
     user_id: payload.studentId,
     module_id: payload.moduleId,
     certificate_url: payload.certificateFileUrl ?? null,

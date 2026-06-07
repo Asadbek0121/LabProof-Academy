@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Plus, Pencil, Trash2, Loader2, BookOpen, Search, CheckCircle2, ChevronRight, UploadCloud, Image as ImageIcon, Layers, Users, Star, ArrowRight, PlayCircle } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageHeader } from "@/components/layout/page-header";
@@ -44,6 +44,8 @@ export function ModulesPage() {
   const [description, setDescription] = useState("");
   const [orderIndex, setOrderIndex] = useState(1);
   const [coverUrl, setCoverUrl] = useState("");
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
+  const [coverUploading, setCoverUploading] = useState(false);
   const [levelLabel, setLevelLabel] = useState("Boshlang‘ich");
   const [durationLabel, setDurationLabel] = useState("10 soat");
   const [passingScore, setPassingScore] = useState(70);
@@ -83,6 +85,48 @@ export function ModulesPage() {
     setModalOpen(true);
   };
 
+  const handleCoverFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Faqat rasm fayli yuklang");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error("Rasm hajmi 8MB dan oshmasin");
+      event.target.value = "";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("kind", "image");
+
+    try {
+      setCoverUploading(true);
+      const response = await fetch("/api/media/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || !data?.ok || !data?.media?.secure_url) {
+        throw new Error(data?.error || "Rasm yuklanmadi");
+      }
+
+      setCoverUrl(data.media.secure_url);
+      toast.success("Modul muqova rasmi yuklandi");
+    } catch (error: any) {
+      toast.error(error?.message || "Rasm yuklashda xatolik yuz berdi");
+    } finally {
+      setCoverUploading(false);
+      event.target.value = "";
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!title.trim()) {
@@ -94,7 +138,7 @@ export function ModulesPage() {
       title,
       description,
       order_index: Number(orderIndex),
-      cover_url: coverUrl || "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=500&auto=format&fit=crop",
+      cover_url: coverUrl || "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1600&auto=format&fit=crop",
       level_label: levelLabel,
       duration_label: durationLabel,
       passing_score: Number(passingScore),
@@ -144,7 +188,7 @@ export function ModulesPage() {
     <div className="min-h-screen bg-slate-50/50 pb-20">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <PageHeader title="Modullar boshqaruvi" current="Modullar" />
-        <Button onClick={openCreateModal} className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-full px-6 h-11 transition-all hover:scale-105 active:scale-95">
+        <Button onClick={openCreateModal} className="flex gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 rounded-lg px-5 h-11 transition-all ">
           <Plus className="size-5" />
           Yangi Modul
         </Button>
@@ -152,8 +196,8 @@ export function ModulesPage() {
 
       {/* Analytics Glassmorphism Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-6 flex items-center gap-5 hover:shadow-md transition-shadow">
-          <div className="size-14 rounded-2xl bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-6 flex items-center gap-5 hover:shadow-md transition-shadow">
+          <div className="size-14 rounded-lg bg-blue-500/10 text-blue-600 flex items-center justify-center shrink-0">
             <BookOpen className="size-6" />
           </div>
           <div>
@@ -161,8 +205,8 @@ export function ModulesPage() {
             <p className="text-3xl font-black text-slate-900">{totalModules}</p>
           </div>
         </div>
-        <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-6 flex items-center gap-5 hover:shadow-md transition-shadow">
-          <div className="size-14 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-6 flex items-center gap-5 hover:shadow-md transition-shadow">
+          <div className="size-14 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
             <CheckCircle2 className="size-6" />
           </div>
           <div>
@@ -170,8 +214,8 @@ export function ModulesPage() {
             <p className="text-3xl font-black text-slate-900">{publishedModules}</p>
           </div>
         </div>
-        <div className="bg-white/60 backdrop-blur-xl border border-white shadow-sm rounded-3xl p-6 flex items-center gap-5 hover:shadow-md transition-shadow">
-          <div className="size-14 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+        <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-6 flex items-center gap-5 hover:shadow-md transition-shadow">
+          <div className="size-14 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
             <Pencil className="size-6" />
           </div>
           <div>
@@ -182,23 +226,23 @@ export function ModulesPage() {
       </div>
 
       {/* Modern Filter Bar */}
-      <div className="bg-white/80 backdrop-blur-xl border border-white shadow-sm rounded-2xl p-3 flex flex-wrap items-center gap-3 mb-8">
+      <div className="bg-white border border-slate-200 shadow-sm rounded-lg p-3 flex flex-wrap items-center gap-3 mb-8">
         <div className="relative flex-1 min-w-[250px]">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-slate-400" />
           <Input 
             placeholder="Modullarni izlash..." 
-            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 rounded-xl transition-all text-base"
+            className="pl-11 h-12 w-full bg-slate-50/50 border-transparent hover:border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 rounded-lg transition-all text-base"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
         <div className="h-8 w-px bg-slate-200 hidden md:block"></div>
-        <Select value={statusFilter} onChange={(e: any) => setStatusFilter(e.target.value)} className="h-12 w-full md:w-[160px] bg-slate-50/50 border-transparent rounded-xl font-medium text-slate-700 focus:border-blue-500">
+        <Select value={statusFilter} onChange={(e: any) => setStatusFilter(e.target.value)} className="h-12 w-full md:w-[160px] bg-slate-50/50 border-transparent rounded-lg font-medium text-slate-700 focus:border-blue-500">
           <option value="all">Status: Barchasi</option>
           <option value="published">Nashr qilingan</option>
           <option value="draft">Qoralama</option>
         </Select>
-        <Select value={difficultyFilter} onChange={(e: any) => setDifficultyFilter(e.target.value)} className="h-12 w-full md:w-[160px] bg-slate-50/50 border-transparent rounded-xl font-medium text-slate-700 focus:border-blue-500">
+        <Select value={difficultyFilter} onChange={(e: any) => setDifficultyFilter(e.target.value)} className="h-12 w-full md:w-[160px] bg-slate-50/50 border-transparent rounded-lg font-medium text-slate-700 focus:border-blue-500">
           <option value="all">Daraja: Barchasi</option>
           <option value="Boshlang‘ich">Boshlang‘ich</option>
           <option value="O‘rta">O‘rta</option>
@@ -208,13 +252,13 @@ export function ModulesPage() {
 
       {/* Premium Table View */}
       {isLoading ? (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 flex flex-col gap-4">
-            {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-16 w-full rounded-2xl" />)}
+            {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
           </div>
         </Card>
       ) : !filteredModules.length ? (
-        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white/50 backdrop-blur-sm rounded-3xl border border-white border-dashed">
+        <div className="flex flex-col items-center justify-center py-20 px-4 bg-white rounded-lg border border-dashed border-slate-200">
           <div className="size-24 bg-blue-50 rounded-full flex items-center justify-center mb-6">
             <BookOpen className="size-10 text-blue-500" />
           </div>
@@ -222,12 +266,12 @@ export function ModulesPage() {
           <p className="text-slate-500 text-center max-w-md mb-8">
             Hozircha hech qanday modul mavjud emas yoki qidiruvga mos modul topilmadi.
           </p>
-          <Button onClick={openCreateModal} className="rounded-full px-8 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide">
+          <Button onClick={openCreateModal} className="rounded-lg px-6 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold tracking-wide">
             <Plus className="size-5 mr-2" /> Yangi Modul Qo'shish
           </Button>
         </div>
       ) : (
-        <Card className="rounded-3xl border border-white shadow-sm overflow-hidden bg-white/80 backdrop-blur-xl animate-in fade-in-50 duration-200">
+        <Card className="rounded-lg border border-slate-200 shadow-sm overflow-hidden bg-white animate-in fade-in-50 duration-200">
           <div className="overflow-x-auto edulab-scrollbar">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-[10px] font-black uppercase text-slate-400 tracking-wider border-b border-slate-100">
@@ -249,7 +293,7 @@ export function ModulesPage() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-4">
-                        <div className="relative size-12 rounded-2xl overflow-hidden shrink-0 shadow-sm border border-slate-100 group-hover:shadow-md transition-all">
+                        <div className="relative size-12 rounded-lg overflow-hidden shrink-0 shadow-sm border border-slate-100 group-hover:shadow-md transition-all">
                           <img src={m.cover_url || "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=500&auto=format&fit=crop"} alt={m.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                         </div>
                         <div className="min-w-0">
@@ -282,7 +326,7 @@ export function ModulesPage() {
                           onClick={() => openEditModal(m)} 
                           variant="ghost" 
                           size="icon" 
-                          className="size-9 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50"
+                          className="size-9 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50"
                         >
                           <Pencil className="size-4.5" />
                         </Button>
@@ -290,7 +334,7 @@ export function ModulesPage() {
                           onClick={() => setDeleteConfirm({ open: true, id: m.id })} 
                           variant="ghost" 
                           size="icon" 
-                          className="size-9 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50"
+                          className="size-9 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
                         >
                           <Trash2 className="size-4.5" />
                         </Button>
@@ -351,7 +395,7 @@ export function ModulesPage() {
                           placeholder="Masalan: Front-End Asoslari"
                           value={title}
                           onChange={(e) => setTitle(e.target.value)}
-                          className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-medium transition-all"
+                          className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-medium transition-all"
                           autoFocus
                         />
                       </div>
@@ -362,26 +406,77 @@ export function ModulesPage() {
                           placeholder="Modul nimalarni o'z ichiga oladi va talabalar nimalarni o'rganadi?"
                           value={description}
                           onChange={(e) => setDescription(e.target.value)}
-                          className="h-32 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 py-4 text-base font-medium transition-all resize-none"
+                          className="h-32 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 py-4 text-base font-medium transition-all resize-none"
                         />
                       </div>
 
-                      <div className="grid gap-2">
-                        <label className="text-sm font-bold text-slate-800">Muqova Rasmi (URL)</label>
+                      <div className="grid gap-3">
+                        <label className="text-sm font-bold text-slate-800">Modul muqova rasmi</label>
+                        <input
+                          ref={coverFileInputRef}
+                          type="file"
+                          accept="image/*"
+                          onChange={handleCoverFileChange}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => coverFileInputRef.current?.click()}
+                          disabled={coverUploading}
+                          className="group relative overflow-hidden rounded-2xl border border-dashed border-blue-200 bg-blue-50/40 p-3 text-left transition hover:border-blue-500 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="flex h-24 w-36 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
+                              {coverUrl ? (
+                                <img
+                                  src={coverUrl}
+                                  alt="Modul muqovasi"
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-blue-500">
+                                  <ImageIcon className="size-9" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-black text-blue-600 shadow-sm">
+                                {coverUploading ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  <UploadCloud className="size-4" />
+                                )}
+                                {coverUploading ? "Yuklanmoqda..." : "Kompyuterdan rasm yuklash"}
+                              </div>
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-bold text-slate-800">Student app uchun modul background rasmi</p>
+                                <span className="rounded-full bg-blue-600 px-2.5 py-1 text-[11px] font-black text-white shadow-sm">
+                                  1600 x 900 px
+                                </span>
+                                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-blue-600 shadow-sm">
+                                  16:9
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs font-medium text-slate-500">
+                                PNG, JPG yoki WEBP. Rasm kurslar ro‘yxati, modul ichidagi katta karta va mavzu kartalarida fon sifatida ko‘rinadi.
+                              </p>
+                            </div>
+                          </div>
+                        </button>
                         <div className="relative">
                           <ImageIcon className="absolute left-4 top-1/2 -translate-y-1/2 size-5 text-slate-400" />
                           <Input
-                            placeholder="https://images.unsplash.com/..."
+                            placeholder="Yoki rasm URL manzilini kiriting"
                             value={coverUrl}
                             onChange={(e) => setCoverUrl(e.target.value)}
-                            className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 pl-12 text-base font-medium transition-all"
+                            className="h-12 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 pl-12 text-sm font-medium transition-all"
                           />
                         </div>
                       </div>
                       
                       <div className="grid gap-2">
                         <label className="text-sm font-bold text-slate-800">Tartib raqami</label>
-                        <Input type="number" value={orderIndex} onChange={(e) => setOrderIndex(Number(e.target.value))} min={1} className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold" />
+                        <Input type="number" value={orderIndex} onChange={(e) => setOrderIndex(Number(e.target.value))} min={1} className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 text-lg font-bold" />
                       </div>
                     </div>
                   )}
@@ -391,7 +486,7 @@ export function ModulesPage() {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
                           <label className="text-sm font-bold text-slate-800">Qiyinchilik Darajasi</label>
-                          <Select value={levelLabel} onChange={(e) => setLevelLabel(e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700 text-base">
+                          <Select value={levelLabel} onChange={(e) => setLevelLabel(e.target.value)} className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700 text-base">
                             <option value="Boshlang‘ich">Boshlang‘ich</option>
                             <option value="O‘rta">O‘rta</option>
                             <option value="Murakkab">Murakkab</option>
@@ -399,7 +494,7 @@ export function ModulesPage() {
                         </div>
                         <div className="grid gap-2">
                           <label className="text-sm font-bold text-slate-800">Davomiyligi</label>
-                          <Input value={durationLabel} onChange={(e) => setDurationLabel(e.target.value)} placeholder="Masalan: 10 soat" className="h-14 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700 text-base" />
+                          <Input value={durationLabel} onChange={(e) => setDurationLabel(e.target.value)} placeholder="Masalan: 10 soat" className="h-14 rounded-lg bg-slate-50 border-transparent focus:bg-white focus:border-blue-600 px-5 font-bold text-slate-700 text-base" />
                         </div>
                       </div>
 
@@ -407,13 +502,13 @@ export function ModulesPage() {
                         <label className="text-sm font-bold text-slate-800">O'tish Balli (%)</label>
                         <div className="flex items-center gap-4">
                           <input type="range" min={0} max={100} step={5} value={passingScore} onChange={(e) => setPassingScore(Number(e.target.value))} className="flex-1 accent-blue-600" />
-                          <div className="w-16 h-10 rounded-xl bg-blue-50 text-blue-600 font-black flex items-center justify-center text-lg">
+                          <div className="w-16 h-10 rounded-lg bg-blue-50 text-blue-600 font-black flex items-center justify-center text-lg">
                             {passingScore}
                           </div>
                         </div>
                       </div>
 
-                      <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 space-y-4 mt-6">
+                      <div className="bg-slate-50 p-5 rounded-lg border border-slate-100 space-y-4 mt-6">
                         <label className="flex items-center justify-between cursor-pointer group">
                           <div>
                             <p className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">Modulni Nashr Qilish</p>
@@ -460,7 +555,7 @@ export function ModulesPage() {
                   <Button variant="ghost" onClick={() => setModalOpen(false)} className="text-slate-500 font-bold hover:bg-slate-100 rounded-full px-6 h-12">
                     Bekor qilish
                   </Button>
-                  <Button onClick={() => setStep(s => s + 1)} className="rounded-full px-8 h-12 font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20">
+                  <Button onClick={() => setStep(s => s + 1)} className="rounded-lg px-6 h-12 font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20">
                     Keyingisi <ArrowRight className="size-4 ml-2" />
                   </Button>
                 </div>

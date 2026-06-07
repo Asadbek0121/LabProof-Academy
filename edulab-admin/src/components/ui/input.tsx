@@ -8,7 +8,7 @@ export const Input = React.forwardRef<
   <input
     ref={ref}
     className={cn(
-      "h-11 w-full rounded-xl border border-border bg-white px-3 text-sm text-foreground shadow-sm transition-all placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10",
+      "h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-foreground shadow-sm transition-all placeholder:text-slate-400 hover:border-slate-300 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-950/55 dark:text-slate-100 dark:placeholder:text-slate-500 dark:hover:border-slate-700",
       className,
     )}
     {...props}
@@ -23,7 +23,7 @@ export const Textarea = React.forwardRef<
   <textarea
     ref={ref}
     className={cn(
-      "min-h-28 w-full resize-none rounded-xl border border-border bg-white px-3 py-3 text-sm text-foreground shadow-sm transition-all placeholder:text-slate-400 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10",
+      "min-h-28 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-foreground shadow-sm transition-all placeholder:text-slate-400 hover:border-slate-300 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-950/55 dark:text-slate-100 dark:placeholder:text-slate-500 dark:hover:border-slate-700",
       className,
     )}
     {...props}
@@ -39,7 +39,7 @@ export function Select({
   return (
     <select
       className={cn(
-        "h-11 rounded-xl border border-border bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-all focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10",
+        "h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-all hover:border-slate-300 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-950/55 dark:text-slate-100 dark:hover:border-slate-700",
         className,
       )}
       {...props}

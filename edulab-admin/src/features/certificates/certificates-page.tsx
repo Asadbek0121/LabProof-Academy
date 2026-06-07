@@ -1,686 +1,689 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   ArrowRight,
   Award,
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Download,
   Eye,
   FileUp,
+  Filter,
+  Link2,
+  Loader2,
+  MoreVertical,
+  Pencil,
   Plus,
   QrCode,
   Search,
+  Settings,
+  Share2,
   ShieldCheck,
   Upload,
   X,
-  Loader2,
-  RefreshCw
 } from "lucide-react";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/layout/page-header";
-import { StatCard } from "@/components/layout/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
-import { useCertificates, useStudents, useModules } from "@/hooks/use-admin-data";
 import { createCertificateAction } from "@/actions/certificates";
-import { toast } from "sonner";
+import { useCertificates, useModules, useStudents } from "@/hooks/use-admin-data";
 import { cn } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
+
+type StatusFilter = "all" | "issued" | "pending";
+type CertRow = {
+  id: string;
+  student: string;
+  email: string;
+  module: string;
+  date: string;
+  status: "Berilgan" | "Kutilmoqda";
+  certificateUrl: string | null;
+  verifyUrl: string;
+  initials: string;
+};
+
+type UploadResponse = {
+  ok?: boolean;
+  error?: string;
+  media?: {
+    secure_url?: string;
+  };
+};
+
+const MAX_CERTIFICATE_FILE_SIZE = 10 * 1024 * 1024;
+
+async function readUploadResponse(response: Response): Promise<UploadResponse | null> {
+  const text = await response.text();
+  if (!text.trim()) return null;
+
+  try {
+    return JSON.parse(text) as UploadResponse;
+  } catch {
+    return {
+      ok: false,
+      error: response.ok
+        ? "Server noto'g'ri javob qaytardi."
+        : `Server xatoligi (${response.status}). Iltimos, qayta urinib ko'ring.`,
+    };
+  }
+}
 
 export function CertificatesPage() {
   const queryClient = useQueryClient();
-  const { data: certificates = [], isLoading: isCertsLoading } = useCertificates();
-  const { data: students = [], isLoading: isStudentsLoading } = useStudents();
-  const { data: modules = [], isLoading: isModulesLoading } = useModules();
+  const { data: certificates = [], isLoading: certsLoading } = useCertificates();
+  const { data: students = [], isLoading: studentsLoading } = useStudents();
+  const { data: modules = [], isLoading: modulesLoading } = useModules();
 
-  const [activeTab, setActiveTab] = useState<"certificates" | "templates">("certificates");
-  
-  // Search & Filter State
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedModuleFilter, setSelectedModuleFilter] = useState("all");
-
-  // Wizard state
+  const [moduleFilter, setModuleFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const [fileUrl, setFileUrl] = useState("");
   const [uploading, setUploading] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [issuedCertDetails, setIssuedCertDetails] = useState<{
-    certificateId: string;
-    qrDataUrl: string;
-    verifyUrl: string;
-  } | null>(null);
-
-  // Set default selection when data loads
-  useEffect(() => {
-    if (students.length > 0 && !selectedStudentId) {
-      setSelectedStudentId(students[0].id);
-    }
-  }, [students, selectedStudentId]);
+  const [submitting, setSubmitting] = useState(false);
+  const [createdCert, setCreatedCert] = useState<{ id: string; qrDataUrl: string; verifyUrl: string } | null>(null);
 
   useEffect(() => {
-    if (modules.length > 0 && !selectedModuleId) {
-      setSelectedModuleId(modules[0].id);
-    }
+    if (!selectedStudentId && students.length) setSelectedStudentId(students[0].id);
+  }, [selectedStudentId, students]);
+
+  useEffect(() => {
+    if (!selectedModuleId && modules.length) setSelectedModuleId(modules[0].id);
   }, [modules, selectedModuleId]);
 
-  // Dynamic statistics
-  const certStats = useMemo(() => {
-    return [
-      { title: "Jami sertifikatlar", value: String(certificates.length), hint: "Barchasini ko'rish", tone: "violet" as const, icon: Award },
-      { title: "Berilgan", value: String(certificates.length), hint: "Sertifikatlar ro'yxati", tone: "green" as const, icon: CheckCircle2 },
-      { title: "Kutilmoqda", value: "0", hint: "Kutilayotganlar", tone: "orange" as const, icon: Clock3 },
-    ];
-  }, [certificates]);
+  const selectedStudent = students.find((student) => student.id === selectedStudentId);
+  const selectedModule = modules.find((module: any) => module.id === selectedModuleId);
 
-  // Filter certificates
-  const filteredCertificates = useMemo(() => {
-    return certificates.filter((c) => {
-      const matchesSearch = 
-        c.student.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.email.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesModule = 
-        selectedModuleFilter === "all" || 
-        c.module.toLowerCase() === selectedModuleFilter.toLowerCase();
-      return matchesSearch && matchesModule;
+  const pendingRows = useMemo(() => {
+    const certifiedStudentIds = new Set(
+      certificates.map((certificate: any) => certificate.student.toLowerCase()),
+    );
+    return students
+      .filter((student) => !certifiedStudentIds.has(student.name.toLowerCase()))
+      .map((student) => ({
+        id: `pending-${student.id}`,
+        student: student.name,
+        email: student.email,
+        module: modules[0]?.title || "Modul tanlanmagan",
+        date: student.joinedAt,
+        status: "Kutilmoqda" as const,
+        certificateUrl: null,
+        verifyUrl: "",
+        initials: student.initials || student.name.slice(0, 1).toUpperCase(),
+      }));
+  }, [certificates, modules, students]);
+
+  const issuedRows: CertRow[] = useMemo(
+    () =>
+      certificates.map((certificate: any) => ({
+        id: certificate.id,
+        student: certificate.student,
+        email: certificate.email,
+        module: certificate.module,
+        date: certificate.date,
+        status: "Berilgan" as const,
+        certificateUrl: certificate.certificateUrl,
+        verifyUrl: certificate.qrCode,
+        initials: certificate.student
+          .split(" ")
+          .map((part: string) => part[0])
+          .join("")
+          .toUpperCase()
+          .slice(0, 2),
+      })),
+    [certificates],
+  );
+
+  const allRows = useMemo(() => [...issuedRows, ...pendingRows], [issuedRows, pendingRows]);
+  const filteredRows = useMemo(() => {
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    return allRows.filter((row) => {
+      const search = searchTerm.trim().toLowerCase();
+      const matchesSearch = !search || row.student.toLowerCase().includes(search) || row.email.toLowerCase().includes(search);
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "issued" && row.status === "Berilgan") ||
+        (statusFilter === "pending" && row.status === "Kutilmoqda");
+      const matchesModule = moduleFilter === "all" || row.module === moduleFilter;
+      const rowDate = new Date(row.date.replace(" - ", " ")).getTime();
+      const matchesDate =
+        dateFilter === "all" ||
+        Number.isNaN(rowDate) ||
+        (dateFilter === "7" && now - rowDate <= 7 * dayMs) ||
+        (dateFilter === "30" && now - rowDate <= 30 * dayMs);
+      return matchesSearch && matchesStatus && matchesModule && matchesDate;
     });
-  }, [certificates, searchTerm, selectedModuleFilter]);
+  }, [allRows, dateFilter, moduleFilter, searchTerm, statusFilter]);
 
-  // Selected student for preview
-  const activeStudent = useMemo(() => {
-    return students.find((s) => s.id === selectedStudentId);
-  }, [students, selectedStudentId]);
+  const stats = {
+    total: allRows.length,
+    issued: issuedRows.length,
+    pending: pendingRows.length,
+  };
+  const issuedPercent = stats.total ? Math.round((stats.issued / stats.total) * 100) : 0;
+  const pendingPercent = stats.total ? 100 - issuedPercent : 0;
+  const previewCertificate = issuedRows.find((row) => row.certificateUrl) ?? issuedRows[0];
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const resetWizard = () => {
+    setStep(1);
+    setFileUrl("");
+    setCreatedCert(null);
+  };
+
+  const openWizard = () => {
+    resetWizard();
+    setDrawerOpen(true);
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
     if (!file) return;
+
+    if (file.size > MAX_CERTIFICATE_FILE_SIZE) {
+      toast.error("Fayl hajmi 10MB dan oshmasligi kerak");
+      event.target.value = "";
+      return;
+    }
+
     setUploading(true);
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("kind", "pdf");
+    formData.append("kind", file.type.startsWith("image/") ? "image" : "pdf");
 
     try {
-      const res = await fetch("/api/media/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-      if (data.ok && data.media) {
-        setFileUrl(data.media.secure_url);
-        toast.success("Sertifikat fayli muvaffaqiyatli yuklandi");
-      } else {
-        toast.error(data.error || "Yuklashda xatolik");
+      const response = await fetch("/api/media/upload", { method: "POST", body: formData });
+      const data = await readUploadResponse(response);
+      if (!response.ok || !data?.ok || !data.media?.secure_url) {
+        throw new Error(data?.error || "Fayl yuklanmadi");
       }
-    } catch (err) {
-      toast.error("Tizimda xatolik yuz berdi");
+      setFileUrl(data.media.secure_url);
+      toast.success("Sertifikat fayli yuklandi");
+    } catch (error: any) {
+      toast.error(error.message || "Fayl yuklashda xatolik");
     } finally {
       setUploading(false);
+      event.target.value = "";
     }
   };
 
-  const handleCreateCertificate = async () => {
-    if (!selectedStudentId) {
-      toast.error("Talabani tanlang");
-      return;
-    }
-    if (!selectedModuleId) {
-      toast.error("Modulni tanlang");
+  const createCertificate = async () => {
+    if (!selectedStudentId || !selectedModuleId) {
+      toast.error("Talaba va modulni tanlang");
       return;
     }
     if (!fileUrl) {
-      toast.error("Iltimos, sertifikat faylini yuklang yoki URL manzilini kiriting");
+      toast.error("Sertifikat faylini yuklang yoki URL kiriting");
       return;
     }
-
-    setIsSubmitting(true);
+    setSubmitting(true);
     try {
-      const student = students.find((s) => s.id === selectedStudentId);
-      const mod = modules.find((m) => m.id === selectedModuleId);
-      const title = `${student?.name || "Talaba"} - ${mod?.title || "Modul"} sertifikati`;
-
       const result = await createCertificateAction({
         studentId: selectedStudentId,
         moduleId: selectedModuleId,
-        title,
+        title: `${selectedStudent?.name || "Talaba"} - ${selectedModule?.title || "Modul"}`,
         certificateFileUrl: fileUrl,
       });
-
-      if (result.ok && result.certificateId && result.qrDataUrl && result.verifyUrl) {
-        setIssuedCertDetails({
-          certificateId: result.certificateId,
-          qrDataUrl: result.qrDataUrl,
-          verifyUrl: result.verifyUrl,
-        });
-        toast.success("Sertifikat muvaffaqiyatli yaratildi");
-        queryClient.invalidateQueries({ queryKey: ["certificates"] });
-        setStep(3);
-      } else {
-        toast.error(result.error || "Sertifikat yaratishda xatolik yuz berdi");
+      if (!result.ok || !result.certificateId || !result.qrDataUrl || !result.verifyUrl) {
+        throw new Error(result.error || "Sertifikat yaratilmadi");
       }
-    } catch (err: any) {
-      toast.error(err.message || "Tizim xatoligi");
+      setCreatedCert({ id: result.certificateId, qrDataUrl: result.qrDataUrl, verifyUrl: result.verifyUrl });
+      setStep(3);
+      await queryClient.invalidateQueries({ queryKey: ["certificates"] });
+      await queryClient.invalidateQueries({ queryKey: ["admin-overview-data"] });
+      toast.success("Sertifikat yaratildi");
+    } catch (error: any) {
+      toast.error(error.message || "Tizim xatoligi");
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
   };
 
-  const handleResetWizard = () => {
-    setStep(1);
-    setFileUrl("");
-    setIssuedCertDetails(null);
+  const downloadCertificate = async (row: CertRow) => {
+    if (!row.certificateUrl) {
+      toast.error("Bu sertifikat fayli hali yuklanmagan");
+      return;
+    }
+    try {
+      const response = await fetch(row.certificateUrl);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `${row.student}-${row.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+      toast.success("Sertifikat yuklab olindi");
+    } catch {
+      window.open(row.certificateUrl, "_blank");
+      toast.info("Fayl yangi oynada ochildi");
+    }
+  };
+
+  const shareCertificate = async (row: CertRow) => {
+    if (!row.verifyUrl) {
+      toast.error("Kutilayotgan sertifikatda havola yo'q");
+      return;
+    }
+    const url = `${window.location.origin}${row.verifyUrl}`;
+    await navigator.clipboard.writeText(url);
+    toast.success("Tekshirish havolasi nusxalandi");
+  };
+
+  const exportCsv = () => {
+    const csv = [
+      ["Talaba", "Email", "Modul", "Sana", "Holat"],
+      ...filteredRows.map((row) => [row.student, row.email, row.module, row.date, row.status]),
+    ]
+      .map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "sertifikatlar.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Sertifikatlar eksport qilindi");
   };
 
   return (
     <>
-      <PageHeader
-        title="Sertifikatlar"
-        current="Sertifikatlar"
-        action={
-          <div className="flex gap-1.5 rounded-2xl border border-border p-1 bg-white shadow-sm">
-            <button
-              onClick={() => setActiveTab("certificates")}
-              className={cn(
-                "rounded-xl px-4 py-1.5 text-xs font-bold transition duration-200",
-                activeTab === "certificates" 
-                  ? "bg-violet-600 text-white shadow font-black" 
-                  : "text-slate-500 hover:bg-slate-100",
-              )}
-            >
-              Sertifikatlar
-            </button>
-            <button
-              onClick={() => setActiveTab("templates")}
-              className={cn(
-                "rounded-xl px-4 py-1.5 text-xs font-bold transition duration-200",
-                activeTab === "templates" 
-                  ? "bg-violet-600 text-white shadow font-black" 
-                  : "text-slate-500 hover:bg-slate-100",
-              )}
-            >
-              Shablonlar
-            </button>
-          </div>
-        }
-      />
+      <PageHeader title="Sertifikatlar" current="Sertifikatlar" />
 
-      {activeTab === "certificates" ? (
-        <div className="grid gap-6 xl:grid-cols-[1fr_400px] animate-in fade-in duration-200">
-          <div className="flex min-w-0 flex-col gap-5">
-            <div className="grid gap-4 grid-cols-3">
-              {certStats.map((item) => (
-                <StatCard key={item.title} item={item} />
-              ))}
+      <div className="certificates-surface -mx-1 -mt-1 space-y-4 pb-4 text-slate-900 dark:text-slate-100">
+        <div className="grid gap-4 md:grid-cols-3 xl:max-w-4xl">
+          <SummaryCard icon={Award} title="Jami sertifikatlar" value={stats.total} hint="Barcha sertifikatlar" tone="blue" />
+          <SummaryCard icon={CheckCircle2} title="Berilgan" value={stats.issued} hint="URL tayyor" tone="green" />
+          <SummaryCard icon={Clock3} title="Kutilmoqda" value={stats.pending} hint="Hali sertifikat yo'q" tone="amber" />
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+          <section className="rounded-xl border border-slate-200 bg-white shadow-[0_10px_28px_rgba(27,39,70,0.055)] dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 dark:border-slate-800">
+              <div className="flex flex-wrap gap-6 text-sm font-black">
+                <TabButton active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>Barcha sertifikatlar</TabButton>
+                <TabButton active={statusFilter === "issued"} onClick={() => setStatusFilter("issued")}>Berilgan</TabButton>
+                <TabButton active={statusFilter === "pending"} onClick={() => setStatusFilter("pending")}>Kutilmoqda</TabButton>
+              </div>
+              <Button onClick={openWizard} className="h-10 rounded-xl px-4 text-xs font-black">
+                <Plus className="size-4" />
+                Yangi sertifikat yaratish
+              </Button>
             </div>
 
-            <Card className="border border-border bg-white rounded-2xl">
-              <CardHeader className="border-b border-slate-100 flex flex-row items-center justify-between pb-3.5">
-                <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide flex items-center gap-2">
-                  <Award className="size-4.5 text-violet-600 animate-pulse" />
-                  Berilgan Sertifikatlar
-                </CardTitle>
-                <Button 
-                  onClick={handleResetWizard} 
-                  variant="secondary"
-                  className="font-bold border border-slate-200 hover:bg-slate-100 text-slate-650 h-8.5 rounded-lg text-xs flex gap-1.5"
-                >
-                  <RefreshCw className="size-3.5" />
-                  Wizardni tozalash
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="grid gap-3 border-b border-slate-100 p-4.5 xl:grid-cols-[1fr_180px_180px] bg-slate-50/30">
-                  <div className="relative">
-                    <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                    <Input 
-                      placeholder="Talaba ismi yoki email orqali..." 
-                      className="pl-10 h-10 rounded-xl border-slate-200 text-xs font-semibold focus:border-violet-500" 
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                  </div>
-                  <Select
-                    value={selectedModuleFilter}
-                    onChange={(e) => setSelectedModuleFilter(e.target.value)}
-                    className="h-10 rounded-xl border-slate-200 text-xs font-bold text-slate-500"
-                  >
-                    <option value="all">Barcha modullar</option>
-                    {modules.map((m) => (
-                      <option key={m.id} value={m.title}>
-                        {m.title}
-                      </option>
-                    ))}
-                  </Select>
-                  <Button 
-                    variant="secondary" 
-                    onClick={() => { setSearchTerm(""); setSelectedModuleFilter("all"); }}
-                    className="h-10 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold"
-                  >
-                    Filtrni tozalash
-                  </Button>
-                </div>
-
-                <div className="overflow-x-auto edulab-scrollbar">
-                  <table className="w-full min-w-[760px] text-sm">
-                    <thead>
-                      <tr className="border-b border-border/50 text-left text-[10px] font-black uppercase tracking-wider text-slate-400 bg-slate-50/50">
-                        {["Talaba", "Modul", "Sana", "Holat", "Amallar"].map((head) => (
-                          <th key={head} className="px-5 py-4">
-                            {head}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {isCertsLoading ? (
-                        <tr>
-                          <td colSpan={5} className="text-center py-12 text-xs font-semibold text-slate-400">
-                            Yuklanmoqda...
-                          </td>
-                        </tr>
-                      ) : filteredCertificates.length > 0 ? (
-                        filteredCertificates.map((certificate, index) => (
-                          <tr key={`${certificate.id}-${index}`} className="group hover:bg-slate-50/30 transition duration-150">
-                            <td className="px-5 py-4.5">
-                              <div className="flex items-center gap-3">
-                                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-50 to-indigo-100 text-sm font-black text-violet-600 border border-violet-100/50">
-                                  {certificate.student[0].toUpperCase()}
-                                </span>
-                                <span>
-                                  <span className="block font-bold text-slate-800 group-hover:text-violet-750 transition-colors">{certificate.student}</span>
-                                  <span className="text-xs text-slate-400 font-semibold mt-0.5">{certificate.email}</span>
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-5 py-4.5 font-bold text-slate-700">{certificate.module}</td>
-                            <td className="px-5 py-4.5 text-slate-500 font-semibold text-xs">{certificate.date}</td>
-                            <td className="px-5 py-4.5">
-                              <Badge variant={certificate.status === "Berilgan" ? "success" : "warning"}>
-                                {certificate.status}
-                              </Badge>
-                            </td>
-                            <td className="px-5 py-4.5">
-                              <div className="flex gap-1.5">
-                                <a href={certificate.qrCode} target="_blank" rel="noreferrer">
-                                  <Button variant="secondary" size="icon" className="h-8 w-8 border border-slate-200 text-slate-500 hover:bg-slate-100 rounded-lg" title="Ko'rish"><Eye className="size-4" /></Button>
-                                </a>
-                                <Button
-                                  variant="secondary"
-                                  size="icon"
-                                  className="h-8 w-8 border border-slate-200 text-slate-500 hover:bg-slate-100 rounded-lg"
-                                  title="Yuklab olish"
-                                  onClick={() => {
-                                    const url = certificate.certificateUrl;
-                                    if (!url) {
-                                      toast.error("Sertifikat fayli mavjud emas. Avval faylni yuklang.");
-                                      return;
-                                    }
-                                    // Use fetch + blob to force download for cross-origin files
-                                    fetch(url)
-                                      .then((res) => {
-                                        if (!res.ok) throw new Error("Fayl yuklab olinmadi");
-                                        return res.blob();
-                                      })
-                                      .then((blob) => {
-                                        const blobUrl = URL.createObjectURL(blob);
-                                        const a = document.createElement("a");
-                                        a.href = blobUrl;
-                                        a.download = `${certificate.id}.pdf`;
-                                        document.body.appendChild(a);
-                                        a.click();
-                                        setTimeout(() => {
-                                          document.body.removeChild(a);
-                                          URL.revokeObjectURL(blobUrl);
-                                        }, 100);
-                                        toast.success("Sertifikat yuklab olindi");
-                                      })
-                                      .catch(() => {
-                                        // Fallback: open in new tab
-                                        window.open(url, "_blank");
-                                        toast.info("Fayl yangi oynada ochildi");
-                                      });
-                                  }}
-                                >
-                                  <Download className="size-4" />
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={5} className="text-center py-16 text-xs font-semibold text-slate-400">
-                            Sertifikatlar topilmadi.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="border-t border-slate-100 bg-slate-50/20 px-5 py-3.5 text-xs font-bold text-slate-400">
-                  Jami {filteredCertificates.length} ta sertifikat
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Certificate Issuing Wizard Sidebar */}
-          <Card className="sticky top-24 h-fit border border-border bg-white rounded-2xl shadow-soft">
-            <CardHeader className="border-b border-slate-100 flex flex-row justify-between items-center pb-3.5">
-              <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide">Yangi sertifikat yaratish</CardTitle>
-              {step > 1 && (
-                <Button variant="ghost" size="icon" onClick={handleResetWizard} className="h-8 w-8 rounded-lg text-slate-400 hover:bg-slate-50">
-                  <X className="size-4" />
-                </Button>
-              )}
-            </CardHeader>
-            <CardContent className="p-5">
-              <div className="mb-6 grid grid-cols-3 gap-2.5">
-                {["Talaba", "Yuklash", "QR kod"].map((label, index) => {
-                  const current = index + 1;
-                  return (
-                    <button
-                      key={label}
-                      onClick={() => {
-                        if (current < step) setStep(current);
-                      }}
-                      disabled={current > step && !issuedCertDetails}
-                      className={cn(
-                        "flex flex-col items-center gap-1.5 rounded-xl border border-slate-150 p-2.5 text-center transition duration-200",
-                        step === current && "border-violet-200 bg-violet-50/40 shadow-sm",
-                        step > current && "border-emerald-250 bg-emerald-50/40",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "flex size-7 items-center justify-center rounded-lg bg-slate-100 text-xs font-extrabold text-slate-500",
-                          step === current && "bg-violet-600 text-white",
-                          step > current && "bg-emerald-500 text-white",
-                        )}
-                      >
-                        {step > current ? <Check className="size-3.5" /> : current}
-                      </span>
-                      <span className="text-[10px] font-bold text-slate-600 tracking-tight">{label}</span>
-                    </button>
-                  );
-                })}
+            <div className="grid gap-3 border-b border-slate-100 p-4 dark:border-slate-800 lg:grid-cols-[1fr_104px_190px_180px]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Talaba ismi yoki email..."
+                  className="h-10 rounded-xl pl-10 text-xs font-bold"
+                />
               </div>
+              <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)} className="h-10 rounded-xl text-xs font-black">
+                <option value="all">Filtr</option>
+                <option value="issued">Berilgan</option>
+                <option value="pending">Kutilmoqda</option>
+              </Select>
+              <Select value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} className="h-10 rounded-xl text-xs font-black">
+                <option value="all">Barcha sanalar</option>
+                <option value="7">So'nggi 7 kun</option>
+                <option value="30">So'nggi 30 kun</option>
+              </Select>
+              <Select value={moduleFilter} onChange={(event) => setModuleFilter(event.target.value)} className="h-10 rounded-xl text-xs font-black">
+                <option value="all">Barcha modullar</option>
+                {modules.map((module: any) => (
+                  <option key={module.id} value={module.title}>{module.title}</option>
+                ))}
+              </Select>
+            </div>
 
-              {step === 1 && (
-                <div className="space-y-5">
-                  <div className="grid gap-1.5">
-                    <span className="text-xs font-bold text-slate-700">Talabani tanlang *</span>
-                    {isStudentsLoading ? (
-                      <div className="h-10.5 bg-slate-50 rounded-xl animate-pulse" />
-                    ) : (
-                      <Select 
-                        className="w-full font-semibold text-slate-800" 
-                        value={selectedStudentId} 
-                        onChange={(e) => setSelectedStudentId(e.target.value)}
-                      >
-                        {students.map((student) => (
-                          <option key={student.id} value={student.id}>{student.name}</option>
-                        ))}
-                      </Select>
-                    )}
-                  </div>
-
-                  {activeStudent && (
-                    <div className="flex items-center gap-3 rounded-xl border border-slate-150 bg-slate-50/50 p-3.5">
-                      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-50 to-indigo-100 font-black text-sm text-violet-600 border border-violet-100/50">
-                        {activeStudent.initials}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-extrabold text-slate-850 leading-snug">{activeStudent.name}</p>
-                        <p className="truncate text-[10px] text-slate-400 font-bold mt-0.5">{activeStudent.phone}</p>
-                      </div>
-                    </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] text-sm">
+                <thead className="border-b border-slate-100 text-left text-[11px] font-black text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                  <tr>
+                    <th className="px-4 py-4">Talaba</th>
+                    <th className="px-4 py-4">Modul</th>
+                    <th className="px-4 py-4">Sana <ChevronDown className="inline size-3" /></th>
+                    <th className="px-4 py-4">Holat <ChevronDown className="inline size-3" /></th>
+                    <th className="px-4 py-4">Sertifikat</th>
+                    <th className="px-4 py-4 text-right">Amallar</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {certsLoading ? (
+                    <tr><td colSpan={6} className="px-4 py-12 text-center text-xs font-bold text-slate-500">Yuklanmoqda...</td></tr>
+                  ) : filteredRows.length ? (
+                    filteredRows.map((row) => (
+                      <tr key={row.id} className="transition hover:bg-slate-50/70 dark:hover:bg-slate-950/40">
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-3">
+                            <span className="flex size-9 items-center justify-center rounded-full bg-slate-100 text-xs font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                              {row.initials || row.student[0]}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-xs font-black text-slate-900 dark:text-white">{row.student}</span>
+                              <span className="block truncate text-[11px] font-bold text-slate-500 dark:text-slate-400">{row.email}</span>
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 text-xs font-bold text-slate-600 dark:text-slate-300">{row.module}</td>
+                        <td className="px-4 py-4 text-xs font-bold text-slate-500 dark:text-slate-400">{row.date}</td>
+                        <td className="px-4 py-4">
+                          <Badge variant={row.status === "Berilgan" ? "success" : "warning"}>{row.status}</Badge>
+                        </td>
+                        <td className="px-4 py-4">
+                          {row.status === "Berilgan" ? (
+                            <a href={row.verifyUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-xs font-black text-blue-600 hover:underline dark:text-blue-300">
+                              Ko'rish <Link2 className="size-3.5" />
+                            </a>
+                          ) : (
+                            <span className="text-xs font-black text-slate-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex justify-end gap-2">
+                            <IconButton title="Ko'rish" disabled={!row.verifyUrl} onClick={() => row.verifyUrl && window.open(row.verifyUrl, "_blank")}>
+                              <Eye className="size-4" />
+                            </IconButton>
+                            <IconButton title="Yuklab olish" disabled={!row.certificateUrl} onClick={() => downloadCertificate(row)}>
+                              <Download className="size-4" />
+                            </IconButton>
+                            <IconButton title="Ulashish" disabled={!row.verifyUrl} onClick={() => shareCertificate(row)}>
+                              <Share2 className="size-4" />
+                            </IconButton>
+                            <IconButton title="Batafsil" onClick={() => toast.info(`${row.student}: ${row.status}`)}>
+                              <MoreVertical className="size-4" />
+                            </IconButton>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr><td colSpan={6} className="px-4 py-14 text-center text-xs font-bold text-slate-500">Sertifikatlar topilmadi.</td></tr>
                   )}
+                </tbody>
+              </table>
+            </div>
 
-                  <div className="grid gap-1.5">
-                    <span className="text-xs font-bold text-slate-700">Modulni tanlang *</span>
-                    {isModulesLoading ? (
-                      <div className="h-10.5 bg-slate-50 rounded-xl animate-pulse" />
-                    ) : (
-                      <Select 
-                        className="w-full font-semibold text-slate-800" 
-                        value={selectedModuleId} 
-                        onChange={(e) => setSelectedModuleId(e.target.value)}
-                      >
-                        {modules.map((m) => (
-                          <option key={m.id} value={m.id}>{m.title}</option>
-                        ))}
-                      </Select>
-                    )}
-                  </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-4 text-xs font-bold text-slate-500 dark:border-slate-800 dark:text-slate-400">
+              <span>Jami {filteredRows.length} ta yozuv</span>
+              <div className="flex items-center gap-2">
+                <IconButton title="Oldingi"><ChevronLeft className="size-4" /></IconButton>
+                <span className="rounded-lg bg-blue-600 px-3 py-2 text-white">1</span>
+                <IconButton title="Keyingi"><ChevronRight className="size-4" /></IconButton>
+              </div>
+            </div>
+          </section>
 
-                  <div className="rounded-xl border border-violet-105 bg-violet-50/50 p-4 text-xs font-semibold text-violet-850 leading-relaxed">
-                    Talaba va modul tanlangandan so'ng, keyingi qadamda sertifikat PDF/Image faylini yuklaysiz.
-                  </div>
-
-                  <div className="flex justify-end pt-3">
-                    <Button 
-                      onClick={() => setStep(2)} 
-                      disabled={!selectedStudentId || !selectedModuleId}
-                      className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold h-10 px-5"
-                    >
-                      Keyingi
-                      <ArrowRight className="size-4" />
-                    </Button>
+          <aside className="space-y-4">
+            <SidePanel title="Sertifikat statistikasi">
+              <div className="grid grid-cols-[124px_1fr] items-center gap-4">
+                <div className="relative flex size-28 items-center justify-center rounded-full" style={{ background: `conic-gradient(#22C55E 0 ${issuedPercent}%, #F59E0B ${issuedPercent}% 100%)` }}>
+                  <div className="flex size-20 flex-col items-center justify-center rounded-full bg-white text-center dark:bg-slate-900">
+                    <span className="text-xl font-black text-emerald-600">{stats.total}</span>
+                    <span className="text-[10px] font-bold text-slate-500">Jami</span>
                   </div>
                 </div>
-              )}
-
-              {step === 2 && (
-                <div className="space-y-5">
-                  <div className="rounded-2xl border border-dashed border-violet-200 bg-violet-50/20 p-8 text-center relative cursor-pointer hover:bg-violet-50/40 transition">
-                    <input 
-                      type="file" 
-                      onChange={handleFileUpload} 
-                      className="absolute inset-0 opacity-0 cursor-pointer" 
-                      accept="application/pdf,image/*" 
-                    />
-                    <Upload className="mx-auto size-9 text-violet-600 animate-bounce" />
-                    <p className="mt-3 text-xs font-extrabold text-slate-700">Sertifikat faylini yuklang</p>
-                    <p className="mt-1 text-[10px] text-slate-400 font-semibold">PDF, PNG yoki JPG. Cloudinary orqali yuklanadi.</p>
-                  </div>
-
-                  {uploading && (
-                    <div className="flex items-center justify-center gap-2 py-2 text-xs font-bold text-slate-455 animate-pulse">
-                      <Loader2 className="size-4 animate-spin text-violet-600" />
-                      Fayl serverga yuklanmoqda...
-                    </div>
-                  )}
-
-                  <div className="grid gap-1.5">
-                    <span className="text-xs font-bold text-slate-700">Fayl URL manzili</span>
-                    <Input 
-                      placeholder="https://cloudinary.com/..." 
-                      value={fileUrl}
-                      onChange={(e) => setFileUrl(e.target.value)}
-                      className="h-10 rounded-xl border-slate-200 font-semibold text-xs"
-                    />
-                  </div>
-
-                  <div className="flex justify-between pt-3 border-t border-slate-100">
-                    <Button variant="secondary" onClick={() => setStep(1)} className="flex items-center gap-2 border border-slate-200 rounded-xl text-xs font-bold h-10 px-4">
-                      <ArrowLeft className="size-4" />
-                      Oldingi
-                    </Button>
-                    <Button 
-                      onClick={handleCreateCertificate} 
-                      disabled={!fileUrl || isSubmitting || uploading}
-                      className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold h-10 px-4"
-                    >
-                      {isSubmitting && <Loader2 className="size-4 animate-spin mr-1" />}
-                      Sertifikat yaratish
-                      <Check className="size-4" />
-                    </Button>
-                  </div>
+                <div className="space-y-3 text-xs font-bold">
+                  <LegendDot color="bg-emerald-500" label="Berilgan" value={`${stats.issued} (${issuedPercent}%)`} />
+                  <LegendDot color="bg-amber-500" label="Kutilmoqda" value={`${stats.pending} (${pendingPercent}%)`} />
                 </div>
-              )}
+              </div>
+            </SidePanel>
 
-              {step === 3 && issuedCertDetails && (
-                <div className="space-y-5 animate-in zoom-in-95 duration-200">
-                  <div className="flex flex-col items-center justify-center p-3 border border-slate-150 bg-slate-50/50 rounded-2xl">
-                    <img 
-                      src={issuedCertDetails.qrDataUrl} 
-                      alt="Verification QR Code" 
-                      className="w-36 h-36 border border-slate-200 rounded-xl shadow-sm bg-white"
-                    />
-                    <p className="text-[10px] font-black text-slate-400 mt-2.5 uppercase tracking-wider">VERIFIKATSIYA QR-KODI</p>
-                  </div>
+            <SidePanel title="Sertifikat namunasi">
+              <CertificatePreview row={previewCertificate} />
+              <Button variant="secondary" className="mt-4 h-10 w-full rounded-xl text-xs font-black" onClick={() => toast.info("Shablon tahrirlash keyingi sozlamalarda ulanadi")}>
+                <Pencil className="size-4" />
+                Namunani o'zgartirish
+              </Button>
+            </SidePanel>
 
-                  <div className="rounded-xl border border-slate-150 p-4 text-xs font-semibold space-y-2 text-slate-700 bg-white">
-                    <p className="flex justify-between">
-                      <span className="text-slate-400">Sertifikat ID:</span>
-                      <span className="font-extrabold text-slate-800">{issuedCertDetails.certificateId}</span>
-                    </p>
-                    <p className="flex justify-between">
-                      <span className="text-slate-400">Havola:</span>
-                      <a 
-                        href={issuedCertDetails.verifyUrl} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="text-violet-600 font-extrabold hover:underline truncate max-w-[160px]"
-                      >
-                        Tekshirish havolasi
-                      </a>
-                    </p>
-                  </div>
+            <SidePanel title="Tezkor amallar">
+              <div className="space-y-2">
+                <QuickAction icon={Pencil} label="Sertifikat shablonini tahrirlash" onClick={() => toast.info("Shablon sozlamalari tayyorlanmoqda")} />
+                <QuickAction icon={QrCode} label="Sertifikat QR sozlamalari" onClick={() => toast.info("QR sozlamalari ochiladi")} />
+                <QuickAction icon={FileUp} label="Sertifikatni ommaviy yaratish" onClick={openWizard} />
+                <QuickAction icon={Download} label="Sertifikatlarni eksport qilish" onClick={exportCsv} />
+              </div>
+            </SidePanel>
+          </aside>
+        </div>
+      </div>
 
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 text-center">
-                    <ShieldCheck className="mx-auto size-9 text-emerald-600 animate-pulse" />
-                    <p className="mt-2 text-xs font-black text-emerald-700 uppercase tracking-wide">Sertifikat Tasdiqlandi</p>
-                    <p className="mt-1 text-[10px] font-semibold text-emerald-700/80 leading-relaxed">QR-kod orqali o'quvchilar va ish beruvchilar tekshirishlari mumkin.</p>
-                  </div>
+      {drawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm">
+          <div className="h-full w-full max-w-[460px] overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-7 flex items-center justify-between">
+              <h2 className="text-lg font-black">Yangi sertifikat yaratish</h2>
+              <button className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900" onClick={() => setDrawerOpen(false)}>
+                <X className="size-5" />
+              </button>
+            </div>
 
-                  <Button onClick={handleResetWizard} className="w-full font-bold h-11 bg-violet-600 text-white hover:bg-violet-700 rounded-xl text-xs">
-                    Yangi sertifikat yaratish
+            <Stepper step={step} />
+
+            {step === 1 && (
+              <div className="mt-8 space-y-5">
+                <Field label="Talabani tanlang">
+                  <Select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)} className="h-12 w-full rounded-xl text-sm">
+                    {studentsLoading ? <option>Yuklanmoqda...</option> : students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}
+                  </Select>
+                </Field>
+                {selectedStudent && (
+                  <SelectedBox title={selectedStudent.name} subtitle={selectedStudent.email} initials={selectedStudent.initials} onClear={() => setSelectedStudentId("")} />
+                )}
+                <Field label="Modulni tanlang">
+                  <Select value={selectedModuleId} onChange={(event) => setSelectedModuleId(event.target.value)} className="h-12 w-full rounded-xl text-sm">
+                    {modulesLoading ? <option>Yuklanmoqda...</option> : modules.map((module: any) => <option key={module.id} value={module.id}>{module.title}</option>)}
+                  </Select>
+                </Field>
+                <InfoBox>Talaba tanlangandan so'ng sertifikatga noyob QR kod biriktiriladi.</InfoBox>
+                <Button onClick={() => setStep(2)} disabled={!selectedStudentId || !selectedModuleId} className="ml-auto flex h-11 rounded-xl px-6 text-xs font-black">
+                  Keyingi <ArrowRight className="size-4" />
+                </Button>
+              </div>
+            )}
+
+            {step === 2 && (
+              <div className="mt-8 space-y-5">
+                <Field label="Sertifikat faylini yuklang">
+                  <label className="relative flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-blue-200 bg-blue-50/40 p-6 text-center transition hover:bg-blue-50 dark:border-blue-500/30 dark:bg-blue-500/10">
+                    <input type="file" className="absolute inset-0 cursor-pointer opacity-0" accept="application/pdf,image/*" onChange={handleFileUpload} />
+                    {uploading ? <Loader2 className="size-8 animate-spin text-blue-600" /> : <Upload className="size-8 text-blue-600" />}
+                    <span className="mt-3 text-xs font-black">Faylni shu yerga tashlang yoki tanlang</span>
+                    <span className="mt-1 text-[11px] font-bold text-slate-500">PDF, PNG, JPG. Maks. 10MB.</span>
+                  </label>
+                </Field>
+                <Field label="Fayl URL manzili">
+                  <Input value={fileUrl} onChange={(event) => setFileUrl(event.target.value)} placeholder="https://..." className="h-11 rounded-xl text-xs font-bold" />
+                </Field>
+                <div className="flex justify-between pt-3">
+                  <Button variant="secondary" onClick={() => setStep(1)} className="h-11 rounded-xl text-xs font-black">Oldingi</Button>
+                  <Button onClick={createCertificate} disabled={!fileUrl || submitting || uploading} className="h-11 rounded-xl text-xs font-black">
+                    {submitting ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                    Sertifikatni yaratish
                   </Button>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            )}
+
+            {step === 3 && createdCert && (
+              <div className="mt-8 space-y-5">
+                <InfoBox tone="success">QR kod generatsiya qilindi. Ushbu QR kod orqali sertifikat haqiqiyligi tekshiriladi.</InfoBox>
+                <div className="grid gap-4 sm:grid-cols-[150px_1fr]">
+                  <img src={createdCert.qrDataUrl} alt="QR kod" className="size-36 rounded-xl border border-slate-200 bg-white p-2" />
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs font-bold dark:border-slate-800 dark:bg-slate-900">
+                    <p className="text-slate-400">Sertifikat ID</p>
+                    <p className="mt-1 break-all font-black text-slate-900 dark:text-white">{createdCert.id}</p>
+                    <p className="mt-4 text-slate-400">Tekshirish havolasi</p>
+                    <a href={createdCert.verifyUrl} target="_blank" rel="noreferrer" className="mt-1 block break-all text-blue-600 dark:text-blue-300">{createdCert.verifyUrl}</a>
+                  </div>
+                </div>
+                <Button onClick={openWizard} className="h-11 w-full rounded-xl text-xs font-black">Yana sertifikat yaratish</Button>
+              </div>
+            )}
+          </div>
         </div>
-      ) : (
-        <CertificateTemplates />
       )}
     </>
   );
 }
 
-const templates = [
-  { id: 1, name: "Klassik Sertifikat", desc: "An'anaviy gold dizayn", color: "from-amber-600 to-yellow-500", icon: "🏅", default: true },
-  { id: 2, name: "Zamonaviy Gradient", desc: "Gradient rang sxemasi", color: "from-violet-600 to-indigo-500", icon: "✨", default: false },
-  { id: 3, name: "Minimal Oq", desc: "Oddiy va toza dizayn", color: "from-slate-600 to-slate-400", icon: "📄", default: false },
-  { id: 4, name: "Premium Qora", desc: "To'q rangdagi elegantlik", color: "from-slate-900 to-slate-700", icon: "🎖️", default: false },
-  { id: 5, name: "Ilmiy Uslub", desc: "Akademik sertifikat", color: "from-emerald-600 to-teal-500", icon: "🔬", default: false },
-  { id: 6, name: "Kreativ Rang", desc: "Yorqin va zamonaviy", color: "from-pink-500 to-orange-400", icon: "🎨", default: false },
-];
-
-function CertificateTemplates() {
-  const [tmplList, setTmplList] = useState(templates);
-
-  const handleMakeDefault = (id: number) => {
-    setTmplList((list) => 
-      list.map((t) => ({
-        ...t,
-        default: t.id === id,
-      }))
-    );
-    toast.success("Tanlangan shablon standart sifatida belgilandi");
+function SummaryCard({ icon: Icon, title, value, hint, tone }: { icon: React.ElementType; title: string; value: number; hint: string; tone: "blue" | "green" | "amber" }) {
+  const colors = {
+    blue: "bg-blue-50 text-blue-600 dark:bg-blue-500/12 dark:text-blue-300",
+    green: "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/12 dark:text-emerald-300",
+    amber: "bg-amber-50 text-amber-600 dark:bg-amber-500/12 dark:text-amber-300",
   };
-
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      <Card className="shadow-soft border border-border bg-white rounded-2xl">
-        <CardHeader className="border-b border-slate-100 flex flex-row items-center justify-between pb-3.5">
-          <div>
-            <CardTitle className="text-sm font-black text-slate-900 uppercase tracking-wide flex items-center gap-2">
-              <FileUp className="size-4.5 text-violet-600 animate-bounce" />
-              Sertifikat Shablonlari
-            </CardTitle>
-            <p className="text-xs font-semibold text-slate-400 mt-0.5">Talabalar uchun sertifikat dizayn shablonlarini boshqarish</p>
-          </div>
-          <Button 
-            onClick={() => toast.info("Shablon yuklash uchun dizayn faylini tanlang (Maksimum 10MB)")}
-            className="bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold h-9 px-4 flex gap-1.5"
-          >
-            <Upload className="size-4" />
-            Yangi shablon
-          </Button>
-        </CardHeader>
-        <CardContent className="p-6">
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {tmplList.map((tmpl) => (
-              <div
-                key={tmpl.id}
-                className="group relative overflow-hidden rounded-2xl border border-slate-150 transition hover:border-violet-300 hover:shadow-md bg-white"
-              >
-                {/* Visual preview */}
-                <div className={`relative h-40 bg-gradient-to-br ${tmpl.color} flex items-center justify-center`}>
-                  <span className="text-5.5 drop-shadow-md select-none">{tmpl.icon}</span>
-                  {tmpl.default && (
-                    <span className="absolute top-3 right-3 rounded-lg bg-white/20 backdrop-blur-sm px-2.5 py-1 text-[10px] font-black uppercase text-white tracking-wider">
-                      Standart
-                    </span>
-                  )}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition" />
-                </div>
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(27,39,70,0.055)] dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-center gap-4">
+        <span className={cn("flex size-14 items-center justify-center rounded-xl", colors[tone])}><Icon className="size-7" /></span>
+        <span>
+          <span className="block text-xs font-black text-slate-600 dark:text-slate-300">{title}</span>
+          <span className="mt-1 block text-3xl font-black">{value}</span>
+          <span className={cn("mt-2 block text-xs font-black", tone === "blue" ? "text-blue-600 dark:text-blue-300" : tone === "green" ? "text-emerald-600 dark:text-emerald-300" : "text-amber-600 dark:text-amber-300")}>{hint}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
 
-                {/* Info */}
-                <div className="p-4">
-                  <h3 className="text-sm font-extrabold text-slate-800 leading-snug group-hover:text-violet-750 transition-colors">{tmpl.name}</h3>
-                  <p className="text-xs text-slate-400 font-semibold mt-1">{tmpl.desc}</p>
-                  <div className="mt-4 flex gap-2">
-                    <Button 
-                      size="sm" 
-                      variant="secondary" 
-                      className="flex-1 font-bold border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs h-8.5"
-                      onClick={() => toast.info(`Shablon: ${tmpl.name} predprosmotri`)}
-                    >
-                      <Eye className="size-3.5 mr-1 text-slate-400" />
-                      Ko'rish
-                    </Button>
-                    {!tmpl.default ? (
-                      <Button 
-                        size="sm" 
-                        className="flex-1 font-bold bg-violet-600 text-white hover:bg-violet-700 rounded-lg text-xs h-8.5" 
-                        onClick={() => handleMakeDefault(tmpl.id)}
-                      >
-                        <Check className="size-3.5 mr-1" />
-                        Standart qilish
-                      </Button>
-                    ) : (
-                      <Button size="sm" variant="secondary" className="flex-1 text-emerald-605 bg-emerald-50 hover:bg-emerald-50 font-bold border border-emerald-100 rounded-lg text-xs h-8.5" disabled>
-                        <CheckCircle2 className="size-3.5 mr-1 text-emerald-500" />
-                        Faol
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className={cn("border-b-2 border-transparent pb-3 text-slate-500 transition dark:text-slate-400", active && "border-blue-600 text-blue-600 dark:text-blue-300")}>
+      {children}
+    </button>
+  );
+}
 
-          <div 
-            onClick={() => toast.info("Shablon yuklash oynasi")}
-            className="mt-6 rounded-2xl border border-dashed border-slate-200 p-8 text-center hover:border-violet-300 hover:bg-slate-50/50 transition cursor-pointer"
-          >
-            <Upload className="mx-auto size-8 text-slate-350 mb-3" />
-            <p className="text-xs font-extrabold text-slate-650">Yangi shablon yuklash</p>
-            <p className="text-[10px] text-slate-400 font-semibold mt-1">PNG, PDF yoki SVG formatida, maksimum 10MB</p>
+function IconButton({ children, title, onClick, disabled }: { children: React.ReactNode; title: string; onClick?: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex size-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
+    >
+      {children}
+    </button>
+  );
+}
+
+function SidePanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_10px_28px_rgba(27,39,70,0.055)] dark:border-slate-800 dark:bg-slate-900">
+      <h3 className="mb-4 text-base font-black">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function LegendDot({ color, label, value }: { color: string; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={cn("size-2.5 rounded-full", color)} />
+      <span className="min-w-0 flex-1 text-slate-600 dark:text-slate-300">{label}</span>
+      <span className="font-black">{value}</span>
+    </div>
+  );
+}
+
+function CertificatePreview({ row }: { row?: CertRow }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-amber-200 bg-[#fffaf0] p-4 text-center shadow-inner dark:border-amber-500/20 dark:bg-amber-500/10">
+      <div className="border-4 border-double border-amber-400 bg-white px-4 py-6 text-slate-900">
+        <p className="text-[10px] font-black tracking-[0.24em] text-slate-500">LABPROOF ACADEMY</p>
+        <h4 className="mt-3 text-2xl font-black tracking-wide">SERTIFIKAT</h4>
+        <p className="mt-4 text-xs text-slate-500">Ushbu sertifikat</p>
+        <p className="mt-1 text-lg font-black">{row?.student || "Talaba tanlanmagan"}</p>
+        <p className="mt-3 text-xs text-slate-500">modulni muvaffaqiyatli yakunlagani uchun berildi.</p>
+        <p className="mt-1 text-sm font-black">{row?.module || "Modul tanlanmagan"}</p>
+        <div className="mt-5 flex items-end justify-between text-[10px] font-bold text-slate-500">
+          <span>Direktor</span>
+          <QrCode className="size-10 text-slate-800" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickAction({ icon: Icon, label, onClick }: { icon: React.ElementType; label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 text-left text-xs font-black text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900">
+      <span className="flex size-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/12 dark:text-blue-300"><Icon className="size-4" /></span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <ChevronRight className="size-4 text-slate-400" />
+    </button>
+  );
+}
+
+function Stepper({ step }: { step: number }) {
+  const labels = ["Talaba", "Sertifikat yuklash", "QR kod va yakunlash"];
+  return (
+    <div className="grid grid-cols-3 gap-3">
+      {labels.map((label, index) => {
+        const current = index + 1;
+        const done = step > current;
+        const active = step === current;
+        return (
+          <div key={label} className="text-center">
+            <span className={cn("mx-auto flex size-8 items-center justify-center rounded-full border text-xs font-black", active && "border-blue-600 bg-blue-600 text-white", done && "border-emerald-500 bg-emerald-500 text-white", !active && !done && "border-slate-200 text-slate-400 dark:border-slate-800")}>{done ? <Check className="size-4" /> : current}</span>
+            <p className={cn("mt-2 text-[11px] font-black", active ? "text-blue-600 dark:text-blue-300" : "text-slate-500")}>{label}</p>
           </div>
-        </CardContent>
-      </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-black text-slate-700 dark:text-slate-300">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function SelectedBox({ title, subtitle, initials, onClear }: { title: string; subtitle: string; initials: string; onClear: () => void }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+      <span className="flex size-10 items-center justify-center rounded-full bg-slate-200 text-xs font-black text-slate-700 dark:bg-slate-800 dark:text-slate-200">{initials}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-black">{title}</span>
+        <span className="block truncate text-xs font-bold text-slate-500">{subtitle}</span>
+      </span>
+      <button type="button" onClick={onClear} className="rounded-lg p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"><X className="size-4" /></button>
+    </div>
+  );
+}
+
+function InfoBox({ children, tone = "info" }: { children: React.ReactNode; tone?: "info" | "success" }) {
+  return (
+    <div className={cn("flex gap-3 rounded-xl border p-4 text-xs font-bold leading-relaxed", tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300" : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300")}>
+      {tone === "success" ? <ShieldCheck className="mt-0.5 size-4 shrink-0" /> : <Settings className="mt-0.5 size-4 shrink-0" />}
+      <span>{children}</span>
     </div>
   );
 }

@@ -1,12 +1,16 @@
 "use server";
 
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { assertAdmin, getSessionUser } from "@/lib/rbac";
-import { getCloudinary, getResourceType, buildSignedUploadSignature } from "@/lib/cloudinary";
+import { getCloudinary, getResourceType, buildSignedUploadSignature, hasCloudinaryEnv } from "@/lib/cloudinary";
 import { createClient } from "@/lib/supabase/server";
 import type { MediaKind } from "@/lib/types";
+import { absoluteUrl } from "@/lib/utils";
 
 const mediaKindSchema = z.enum([
   "image",
@@ -19,11 +23,54 @@ const mediaKindSchema = z.enum([
   "file",
 ]);
 
+type UploadedMedia = {
+  public_id: string;
+  secure_url: string;
+  resource_type: string;
+  format: string;
+  bytes: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+};
+
+function safeFileStem(fileName: string) {
+  return path
+    .basename(fileName, path.extname(fileName))
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "upload";
+}
+
+async function uploadBufferToLocalPublic(
+  buffer: Buffer,
+  kind: MediaKind,
+  fileName: string,
+): Promise<UploadedMedia> {
+  const extension = path.extname(fileName).toLowerCase() || ".bin";
+  const stem = safeFileStem(fileName);
+  const id = randomUUID();
+  const relativePath = `/uploads/admin/${kind}/${id}-${stem}${extension}`;
+  const outputPath = path.join(process.cwd(), "public", relativePath);
+
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, buffer);
+
+  return {
+    public_id: `local:${relativePath}`,
+    secure_url: absoluteUrl(relativePath),
+    resource_type: getResourceType(kind),
+    format: extension.replace(".", "") || "bin",
+    bytes: buffer.byteLength,
+  };
+}
+
 async function uploadBufferToCloudinary(
   buffer: Buffer,
   kind: MediaKind,
   fileName: string,
-) {
+): Promise<UploadedMedia> {
   const client = getCloudinary();
   const resourceType = getResourceType(kind);
 
@@ -91,11 +138,10 @@ export async function uploadMediaAction(formData: FormData) {
   }
 
   const bytes = await file.arrayBuffer();
-  const uploaded = await uploadBufferToCloudinary(
-    Buffer.from(bytes),
-    kind,
-    file.name,
-  );
+  const buffer = Buffer.from(bytes);
+  const uploaded = hasCloudinaryEnv()
+    ? await uploadBufferToCloudinary(buffer, kind, file.name)
+    : await uploadBufferToLocalPublic(buffer, kind, file.name);
 
   const supabase = await createClient();
   const { error } = await supabase.from("media_library").insert({
@@ -111,9 +157,9 @@ export async function uploadMediaAction(formData: FormData) {
     original_filename: file.name,
     uploaded_by: user?.id ?? null,
     metadata: {
-      source: "next-admin",
-      signed: true,
-      optimized: true,
+      source: hasCloudinaryEnv() ? "next-admin" : "next-admin-local",
+      signed: hasCloudinaryEnv(),
+      optimized: hasCloudinaryEnv(),
     },
   });
 
