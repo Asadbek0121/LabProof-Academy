@@ -11442,6 +11442,86 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
     return '$amount $currency';
   }
 
+  DateTime? _dateValue(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      final raw = row[key];
+      if (raw == null) continue;
+      if (raw is DateTime) return raw;
+      final parsed = DateTime.tryParse(raw.toString());
+      if (parsed != null) return parsed.toLocal();
+    }
+    return null;
+  }
+
+  String _formatBillingDate(DateTime? value) {
+    if (value == null) return '--.--.----';
+    final day = value.day.toString().padLeft(2, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    return '$day.$month.${value.year}';
+  }
+
+  int? _daysLeft(DateTime? endDate) {
+    if (endDate == null) return null;
+    final now = DateTime.now();
+    return math.max(0, endDate.difference(now).inDays + 1);
+  }
+
+  Map<String, dynamic>? _activeSubscription(
+    List<Map<String, dynamic>> subscriptions,
+  ) {
+    for (final row in subscriptions) {
+      if ((row['status'] ?? '').toString().toLowerCase() == 'active') {
+        return row;
+      }
+    }
+    return subscriptions.isEmpty ? null : subscriptions.first;
+  }
+
+  List<_BillingPlanData> _planCards(
+    List<Map<String, dynamic>> plans,
+    List<AcademyModule> paidModules,
+  ) {
+    if (plans.isNotEmpty) {
+      return plans.take(6).map((plan) {
+        final months = (plan['duration_months'] as num?)?.round() ?? 1;
+        final title = months <= 1 ? '1 oy' : '$months oy';
+        final price = (plan['price_label'] ?? '').toString().trim();
+        final perMonth = months > 1 && price.isNotEmpty
+            ? '$price / $months oy'
+            : '/ oy';
+        return _BillingPlanData(
+          title: title,
+          price: price.isEmpty ? 'Admin tarif' : price,
+          perMonth: perMonth,
+          discount: months >= 12
+              ? '30% chegirma'
+              : months >= 3
+              ? '10% chegirma'
+              : '',
+        );
+      }).toList();
+    }
+
+    final fallbackPrice = paidModules
+        .map((module) => module.subscriptionPriceLabel.trim())
+        .firstWhere((value) => value.isNotEmpty, orElse: () => 'Admin tarif');
+    return [
+      _BillingPlanData(title: '1 oy', price: fallbackPrice, perMonth: '/ oy'),
+      _BillingPlanData(
+        title: '3 oy',
+        price: fallbackPrice == 'Admin tarif' ? 'Admin tarif' : fallbackPrice,
+        perMonth: '/ 3 oy',
+        discount: '10% chegirma',
+      ),
+      _BillingPlanData(
+        title: '12 oy',
+        price: fallbackPrice == 'Admin tarif' ? 'Admin tarif' : fallbackPrice,
+        perMonth: '/ yil',
+        discount: '30% chegirma',
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final paidModules = widget.data.modules
@@ -11456,8 +11536,9 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
     final transactions =
         billing?['transactions'] ?? const <Map<String, dynamic>>[];
     final plans = billing?['plans'] ?? const <Map<String, dynamic>>[];
-    return _ProfileModalScaffold(
-      title: t('billing_title'),
+    final activeSubscription = _activeSubscription(subscriptions);
+    final planCards = _planCards(plans, paidModules);
+    return _ProfileBillingScaffold(
       child: error != null
           ? _ProfileErrorState(
               icon: Icons.credit_card_off_rounded,
@@ -11470,60 +11551,66 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _ProfileBillingSummary(
-                  activeCount: subscriptions.length,
-                  planCount: plans.length + paidModules.length,
-                  transactionCount: transactions.length,
-                ),
-                const SizedBox(height: 18),
-                _ProfileSheetTitle(t('active_subscription')),
-                if (subscriptions.isEmpty)
-                  _ProfileEmptyPanel(
-                    icon: Icons.workspace_premium_outlined,
-                    title: t('no_subscription'),
-                    subtitle:
-                        'Pullik modullarni ochish uchun admin tasdiqlagan tariflardan birini tanlang.',
-                  )
-                else ...[
-                  for (final row in subscriptions)
-                    _BillingRow(
-                      icon: Icons.verified_rounded,
-                      iconColor: const Color(0xFF22C55E),
-                      title: _subscriptionTitle(row),
-                      subtitle:
-                          '${row['status'] ?? 'active'} · ${row['billing_interval'] ?? row['ends_at'] ?? ''}',
-                      value: _money(row),
+                _BillingSubscriptionHero(
+                  title: activeSubscription == null
+                      ? 'Bepul a’zo'
+                      : _subscriptionTitle(activeSubscription),
+                  isActive:
+                      (activeSubscription?['status'] ?? '')
+                          .toString()
+                          .toLowerCase() ==
+                      'active',
+                  startDate: _dateValue(
+                    activeSubscription ?? const <String, dynamic>{},
+                    ['current_period_start', 'starts_at', 'created_at'],
+                  ),
+                  endDate: _dateValue(
+                    activeSubscription ?? const <String, dynamic>{},
+                    ['current_period_end', 'ends_at'],
+                  ),
+                  daysLeft: _daysLeft(
+                    _dateValue(
+                      activeSubscription ?? const <String, dynamic>{},
+                      ['current_period_end', 'ends_at'],
                     ),
-                ],
-                const SizedBox(height: 18),
-                _ProfileSheetTitle(t('available_plans')),
-                if (plans.isEmpty && paidModules.isEmpty)
+                  ),
+                  onAction: () => unawaited(_openSupport()),
+                ),
+                const SizedBox(height: 22),
+                const _BillingSectionHeader(title: 'Mavjud tariflar'),
+                const SizedBox(height: 10),
+                if (planCards.isEmpty)
                   _ProfileEmptyPanel(
                     icon: Icons.price_check_rounded,
                     title: 'Tariflar hali kiritilmagan',
                     subtitle:
                         'Tariflar admin paneldagi to‘lov sozlamasidan keladi.',
                   )
-                else ...[
-                  for (final plan in plans)
-                    _BillingRow(
-                      icon: Icons.workspace_premium_rounded,
-                      title: (plan['title'] ?? 'Premium').toString(),
-                      subtitle: '${plan['duration_months'] ?? 1} oy',
-                      value: (plan['price_label'] ?? '').toString(),
+                else
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    child: Row(
+                      children: [
+                        for (var index = 0; index < planCards.length; index++)
+                          Padding(
+                            padding: EdgeInsets.only(
+                              right: index == planCards.length - 1 ? 0 : 10,
+                            ),
+                            child: _BillingPlanCard(
+                              data: planCards[index],
+                              selected: index == 0,
+                              onTap: () => unawaited(_openSupport()),
+                            ),
+                          ),
+                      ],
                     ),
-                  for (final module in paidModules)
-                    _BillingRow(
-                      icon: Icons.lock_open_rounded,
-                      title: module.title,
-                      subtitle: '${module.freeTopicLimit} ta bepul mavzu',
-                      value: module.subscriptionPriceLabel.trim().isEmpty
-                          ? 'Admin tarif'
-                          : module.subscriptionPriceLabel,
-                    ),
-                ],
-                const SizedBox(height: 18),
-                _ProfileSheetTitle(t('payment_history')),
+                  ),
+                const SizedBox(height: 14),
+                const _BillingInfoBanner(),
+                const SizedBox(height: 22),
+                _BillingSectionHeader(title: t('payment_history')),
+                const SizedBox(height: 10),
                 if (transactions.isEmpty)
                   _ProfileEmptyPanel(
                     icon: Icons.receipt_long_outlined,
@@ -11532,21 +11619,24 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
                         'To‘lov amalga oshirilsa, holati va sanasi shu yerda chiqadi.',
                   )
                 else
-                  for (final row in transactions)
-                    _BillingRow(
-                      icon: Icons.receipt_long_rounded,
-                      title: (row['provider'] ?? 'payment').toString(),
-                      subtitle:
-                          '${row['status'] ?? ''} · ${(row['created_at'] ?? '').toString()}',
-                      value: _money(row),
+                  _BillingHistoryList(
+                    rows: transactions,
+                    dateBuilder: (row) => _formatBillingDate(
+                      _dateValue(row, ['created_at', 'paid_at']),
                     ),
-                const SizedBox(height: 18),
+                    moneyBuilder: _money,
+                  ),
+                const SizedBox(height: 22),
                 SizedBox(
                   width: double.infinity,
-                  child: FilledButton.icon(
+                  child: _BillingGradientButton(
                     onPressed: () => unawaited(_openSupport()),
-                    icon: const Icon(Icons.support_agent_rounded),
-                    label: Text(t('manage_with_admin')),
+                    icon: const Icon(Icons.diamond_outlined),
+                    label: Text(
+                      activeSubscription == null
+                          ? 'Premium obuna olish'
+                          : 'Obunani uzaytirish',
+                    ),
                   ),
                 ),
               ],
@@ -11663,6 +11753,804 @@ class _ProfileModalScaffold extends StatelessWidget {
               const SizedBox(height: 16),
               child,
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileBillingScaffold extends StatelessWidget {
+  const _ProfileBillingScaffold({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(18, 6, 18, bottomInset + 18),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  _BillingHeaderButton(
+                    icon: Icons.arrow_back_rounded,
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      'To‘lovlar va obuna',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                  ),
+                  _BillingHeaderButton(
+                    icon: Icons.help_outline_rounded,
+                    onPressed: () {
+                      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'To‘lov va obuna bo‘yicha yordam admin orqali beriladi.',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              child,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BillingHeaderButton extends StatelessWidget {
+  const _BillingHeaderButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      style: IconButton.styleFrom(
+        fixedSize: const Size(48, 48),
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF0F172A),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: Color(0xFFE4E6F4)),
+        ),
+      ),
+    );
+  }
+}
+
+class _BillingSubscriptionHero extends StatelessWidget {
+  const _BillingSubscriptionHero({
+    required this.title,
+    required this.isActive,
+    required this.startDate,
+    required this.endDate,
+    required this.daysLeft,
+    required this.onAction,
+  });
+
+  final String title;
+  final bool isActive;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final int? daysLeft;
+  final VoidCallback onAction;
+
+  static String _date(DateTime? value) {
+    if (value == null) return '--.--.----';
+    final day = value.day.toString().padLeft(2, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    return '$day.$month.${value.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final days = daysLeft;
+    final ringValue = days == null ? .0 : (days / 30).clamp(.05, 1.0);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.white, Color(0xFFFBFAFF), Color(0xFFF8F5FF)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Color(0xFFE1D9FF)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF6D4AFF).withValues(alpha: .08),
+            blurRadius: 26,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF7C4DFF), Color(0xFF4F35E8)],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF6D4AFF).withValues(alpha: .26),
+                      blurRadius: 16,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.workspace_premium_rounded,
+                  color: Colors.white,
+                  size: 34,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        _BillingStatusPill(isActive: isActive),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      isActive
+                          ? 'Sizning obunangiz faol'
+                          : 'Premium obuna hali ulanmagan',
+                      style: const TextStyle(
+                        color: Color(0xFF64748B),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 86,
+                height: 86,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 78,
+                      height: 78,
+                      child: CircularProgressIndicator(
+                        value: ringValue,
+                        strokeWidth: 8,
+                        backgroundColor: const Color(0xFFEDE8FF),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          isActive
+                              ? AppColors.studentPrimary
+                              : const Color(0xFFCBD5E1),
+                        ),
+                        strokeCap: StrokeCap.round,
+                      ),
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          days == null ? '0' : '$days',
+                          style: const TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          isActive ? 'kun qoldi' : 'kun',
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _BillingDateTile(
+                  title: 'Boshlangan sana',
+                  value: _date(startDate),
+                ),
+              ),
+              Container(width: 1, height: 42, color: const Color(0xFFE4E6F4)),
+              Expanded(
+                child: _BillingDateTile(
+                  title: 'Tugash sanasi',
+                  value: _date(endDate),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _BillingGradientButton(
+            onPressed: onAction,
+            icon: Icon(isActive ? Icons.sync_rounded : Icons.diamond_outlined),
+            label: Text(
+              isActive ? 'Obunani uzaytirish' : 'Premium obuna olish',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingStatusPill extends StatelessWidget {
+  const _BillingStatusPill({required this.isActive});
+
+  final bool isActive;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: isActive ? const Color(0xFFEAFBF0) : const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(
+          color: isActive ? const Color(0xFFBBF7D0) : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive
+                  ? const Color(0xFF16A34A)
+                  : const Color(0xFF94A3B8),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isActive ? 'Faol' : 'Faol emas',
+            style: TextStyle(
+              color: isActive
+                  ? const Color(0xFF15803D)
+                  : const Color(0xFF64748B),
+              fontWeight: FontWeight.w900,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingDateTile extends StatelessWidget {
+  const _BillingDateTile({required this.title, required this.value});
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
+              const Icon(
+                Icons.calendar_month_rounded,
+                color: AppColors.studentPrimary,
+                size: 17,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingSectionHeader extends StatelessWidget {
+  const _BillingSectionHeader({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontWeight: FontWeight.w900,
+              fontSize: 20,
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: () {},
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Barchasi'),
+              SizedBox(width: 2),
+              Icon(Icons.chevron_right_rounded, size: 18),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BillingPlanData {
+  const _BillingPlanData({
+    required this.title,
+    required this.price,
+    required this.perMonth,
+    this.discount = '',
+  });
+
+  final String title;
+  final String price;
+  final String perMonth;
+  final String discount;
+}
+
+class _BillingPlanCard extends StatelessWidget {
+  const _BillingPlanCard({
+    required this.data,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _BillingPlanData data;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        width: 136,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected
+                ? AppColors.studentPrimary
+                : const Color(0xFFE2E8F0),
+            width: selected ? 1.6 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.navy.withValues(alpha: .04),
+              blurRadius: 16,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            if (selected)
+              const Positioned(
+                right: 0,
+                top: 0,
+                child: CircleAvatar(
+                  radius: 13,
+                  backgroundColor: AppColors.studentPrimary,
+                  child: Icon(
+                    Icons.check_rounded,
+                    color: Colors.white,
+                    size: 17,
+                  ),
+                ),
+              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  data.title,
+                  style: const TextStyle(
+                    color: Color(0xFF334155),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  data.price,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 19,
+                    height: 1.08,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  data.perMonth,
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+                if (data.discount.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.studentPrimary.withValues(alpha: .1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      data.discount,
+                      style: const TextStyle(
+                        color: AppColors.studentPrimary,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                for (final feature in const [
+                  'Barcha kurslar',
+                  'Sertifikat',
+                  'Progress kuzatuv',
+                  'Reklamasiz',
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.check_rounded,
+                          color: AppColors.studentPrimary,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            feature,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF475569),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BillingInfoBanner extends StatelessWidget {
+  const _BillingInfoBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFAFF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE1D9FF)),
+      ),
+      child: const Row(
+        children: [
+          IconBadge(
+            icon: Icons.local_offer_rounded,
+            color: AppColors.studentPrimary,
+            size: 46,
+          ),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Bir martalik to‘lov',
+                  style: TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'To‘lov tasdiqlangandan so‘ng obunangiz darhol faollashadi.',
+                  style: TextStyle(
+                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingHistoryList extends StatelessWidget {
+  const _BillingHistoryList({
+    required this.rows,
+    required this.dateBuilder,
+    required this.moneyBuilder,
+  });
+
+  final List<Map<String, dynamic>> rows;
+  final String Function(Map<String, dynamic>) dateBuilder;
+  final String Function(Map<String, dynamic>) moneyBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: [
+          for (var index = 0; index < rows.length; index++) ...[
+            _BillingHistoryRow(
+              row: rows[index],
+              date: dateBuilder(rows[index]),
+              amount: moneyBuilder(rows[index]),
+            ),
+            if (index != rows.length - 1)
+              const Divider(height: 1, color: Color(0xFFE2E8F0)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingHistoryRow extends StatelessWidget {
+  const _BillingHistoryRow({
+    required this.row,
+    required this.date,
+    required this.amount,
+  });
+
+  final Map<String, dynamic> row;
+  final String date;
+  final String amount;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = (row['status'] ?? 'paid').toString();
+    final isPaid =
+        status.toLowerCase().contains('paid') ||
+        status.toLowerCase().contains('success') ||
+        status.toLowerCase().contains('to‘langan');
+    return Padding(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: const Color(0xFFEAFBF0),
+            child: Icon(
+              isPaid ? Icons.verified_rounded : Icons.schedule_rounded,
+              color: isPaid ? const Color(0xFF16A34A) : const Color(0xFFF59E0B),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  date,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  (row['provider'] ?? 'Premium Student').toString(),
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                amount.isEmpty ? '—' : amount,
+                style: const TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                isPaid ? 'To‘langan' : status,
+                style: TextStyle(
+                  color: isPaid
+                      ? const Color(0xFF16A34A)
+                      : const Color(0xFFF59E0B),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right_rounded, color: Color(0xFF94A3B8)),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingGradientButton extends StatelessWidget {
+  const _BillingGradientButton({
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+  });
+
+  final VoidCallback onPressed;
+  final Widget icon;
+  final Widget label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(15),
+        child: Ink(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(15),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF6D4AFF), Color(0xFF5738E8)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF6D4AFF).withValues(alpha: .22),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: IconTheme(
+            data: const IconThemeData(color: Colors.white, size: 22),
+            child: DefaultTextStyle(
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  icon,
+                  const SizedBox(width: 10),
+                  Flexible(child: label),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -11946,52 +12834,6 @@ class _ProfileErrorState extends StatelessWidget {
   }
 }
 
-class _ProfileBillingSummary extends StatelessWidget {
-  const _ProfileBillingSummary({
-    required this.activeCount,
-    required this.planCount,
-    required this.transactionCount,
-  });
-
-  final int activeCount;
-  final int planCount;
-  final int transactionCount;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _ProfileStatusCard(
-            icon: Icons.verified_rounded,
-            title: 'Faol',
-            value: '$activeCount',
-            color: const Color(0xFF22C55E),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ProfileStatusCard(
-            icon: Icons.sell_rounded,
-            title: 'Tarif',
-            value: '$planCount',
-            color: AppColors.studentPrimary,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ProfileStatusCard(
-            icon: Icons.receipt_long_rounded,
-            title: 'To‘lov',
-            value: '$transactionCount',
-            color: const Color(0xFFF59E0B),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _ProfileEmptyPanel extends StatelessWidget {
   const _ProfileEmptyPanel({
     required this.icon,
@@ -12145,59 +12987,6 @@ class _ProfilePolicyCard extends StatelessWidget {
             ),
             if (i != blocks.length - 1) const SizedBox(height: 14),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _BillingRow extends StatelessWidget {
-  const _BillingRow({
-    required this.title,
-    required this.subtitle,
-    required this.value,
-    this.icon = Icons.workspace_premium_rounded,
-    this.iconColor = AppColors.studentPrimary,
-  });
-
-  final String title;
-  final String subtitle;
-  final String value;
-  final IconData icon;
-  final Color iconColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: iconColor),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                if (subtitle.trim().isNotEmpty)
-                  Text(
-                    subtitle,
-                    style: const TextStyle(color: Color(0xFF64748B)),
-                  ),
-              ],
-            ),
-          ),
-          if (value.trim().isNotEmpty)
-            Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
         ],
       ),
     );
