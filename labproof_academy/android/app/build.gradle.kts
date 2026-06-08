@@ -9,6 +9,15 @@ android {
     namespace = "com.labproof.labproof_academy"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+    val releaseStorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+    val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+    val hasReleaseSigning =
+        !releaseStorePath.isNullOrBlank() &&
+            !releaseStorePassword.isNullOrBlank() &&
+            !releaseKeyAlias.isNullOrBlank() &&
+            !releaseKeyPassword.isNullOrBlank()
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -30,11 +39,21 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStorePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig =
+                signingConfigs.getByName(if (hasReleaseSigning) "release" else "debug")
         }
     }
 }
