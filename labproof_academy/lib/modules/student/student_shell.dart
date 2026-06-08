@@ -16,6 +16,7 @@ import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
 import '../../core/constants/app_language.dart';
 import '../../core/constants/app_colors.dart';
+import '../../core/services/app_update_service.dart';
 import '../../core/widgets/shared_widgets.dart';
 import '../../data/models/academy_models.dart';
 import '../../data/repositories/supabase_academy_repository.dart';
@@ -57,7 +58,7 @@ class StudentShell extends StatefulWidget {
   final AppLanguage language;
   final ValueChanged<AppLanguage> onLanguageChanged;
   final ValueChanged<ThemeMode> onThemeChanged;
-  final Future<bool> Function() onCheckForUpdate;
+  final Future<AppUpdateCheckResult> Function() onCheckForUpdate;
   final VoidCallback onSignOut;
 
   @override
@@ -294,9 +295,20 @@ class _StudentShellState extends State<StudentShell> {
   }
 
   Future<void> _checkForUpdateManually() async {
-    final found = await widget.onCheckForUpdate();
-    if (!mounted || found) return;
-    _showInfo('Yangi versiya topilmadi.');
+    final result = await widget.onCheckForUpdate();
+    if (!mounted || result == AppUpdateCheckResult.available) return;
+    switch (result) {
+      case AppUpdateCheckResult.unavailable:
+        _showInfo('Sizda so‘nggi versiya o‘rnatilgan.');
+      case AppUpdateCheckResult.serverUnavailable:
+        _showInfo(
+          'Yangilanish serveriga ulanib bo‘lmadi. Internetni tekshiring.',
+        );
+      case AppUpdateCheckResult.skipped:
+        _showInfo('Yangilanish faqat Android APK ichida tekshiriladi.');
+      case AppUpdateCheckResult.available:
+        break;
+    }
   }
 
   Future<void> _openProfileEditor() async {

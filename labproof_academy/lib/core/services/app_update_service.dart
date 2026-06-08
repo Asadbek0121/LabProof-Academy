@@ -29,14 +29,13 @@ class AppRelease {
 }
 
 class AppReleaseLookup {
-  const AppReleaseLookup({
-    required this.reachedServer,
-    this.release,
-  });
+  const AppReleaseLookup({required this.reachedServer, this.release});
 
   final bool reachedServer;
   final AppRelease? release;
 }
+
+enum AppUpdateCheckResult { available, unavailable, serverUnavailable, skipped }
 
 class AppUpdateService {
   const AppUpdateService({SupabaseClient? client}) : _client = client;

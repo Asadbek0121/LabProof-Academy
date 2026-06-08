@@ -198,7 +198,7 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
     unawaited(AppPreferencesService.saveStudentLanguage(language));
   }
 
-  Future<bool> _checkForUpdate({bool allowRetry = true}) async {
+  Future<AppUpdateCheckResult> _checkForUpdate({bool allowRetry = true}) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       if (_previewUpdateOnWeb) {
         final dialogContext = _navigatorKey.currentContext;
@@ -207,7 +207,7 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
             dialogContext == null ||
             !dialogContext.mounted) {
           _updateCheckStarted = false;
-          return false;
+          return AppUpdateCheckResult.skipped;
         }
 
         _updateDialogShown = true;
@@ -225,9 +225,9 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
                 'Bu local preview. Telefonda shunga o‘xshash yangilanish oynasi chiqadi.',
           ),
         );
-        return true;
+        return AppUpdateCheckResult.available;
       }
-      return false;
+      return AppUpdateCheckResult.skipped;
     }
 
     final installedVersionCode =
@@ -240,7 +240,7 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
     final dialogContext = _navigatorKey.currentContext;
 
     if (!mounted || _updateDialogShown) {
-      return false;
+      return AppUpdateCheckResult.available;
     }
 
     if (release == null) {
@@ -256,21 +256,23 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
       } else {
         _updateRetryCount = 0;
       }
-      return false;
+      return lookup.reachedServer
+          ? AppUpdateCheckResult.unavailable
+          : AppUpdateCheckResult.serverUnavailable;
     }
 
     if (dialogContext == null || !dialogContext.mounted) {
       _updateCheckStarted = false;
-      return false;
+      return AppUpdateCheckResult.skipped;
     }
 
     _updateRetryCount = 0;
     _updateDialogShown = true;
     await _showUpdateDialog(dialogContext, release);
-    return true;
+    return AppUpdateCheckResult.available;
   }
 
-  Future<bool> _checkForUpdateManually() async {
+  Future<AppUpdateCheckResult> _checkForUpdateManually() async {
     _updateDialogShown = false;
     _updateCheckStarted = true;
     return _checkForUpdate(allowRetry: false);
@@ -342,6 +344,15 @@ class _LabProofAcademyAppState extends State<LabProofAcademyApp> {
                               setDialogState(() => progress = value);
                             },
                           );
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'APK yuklandi. Android o‘rnatish oynasida “O‘rnatish” tugmasini bosing.',
+                                ),
+                              ),
+                            );
+                          }
                           if (context.mounted && !release.isRequired) {
                             Navigator.of(context).pop();
                           }
