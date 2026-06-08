@@ -11045,8 +11045,6 @@ String _profileText(AppLanguage language, String key) {
     'pin_saved': '4 xonali parol saqlandi.',
     'biometric_title': 'Biometrik qulf',
     'biometric_subtitle': 'Qurilma biometrik himoyasidan foydalanish',
-    'biometric_note':
-        'APK qurilmada barmoq izi yoki Face ID mavjud bo‘lsa, keyingi bosqichda shu sozlama orqali tekshiruv yoqiladi.',
     'billing_title': 'To‘lovlar va obuna',
     'active_subscription': 'Faol obuna',
     'available_plans': 'Mavjud tariflar',
@@ -11094,8 +11092,6 @@ String _profileText(AppLanguage language, String key) {
     'pin_saved': '4-значный пароль сохранён.',
     'biometric_title': 'Биометрическая блокировка',
     'biometric_subtitle': 'Использовать защиту устройства',
-    'biometric_note':
-        'В APK при наличии отпечатка или Face ID эта настройка будет включать проверку.',
     'billing_title': 'Платежи и подписка',
     'active_subscription': 'Активная подписка',
     'available_plans': 'Доступные тарифы',
@@ -11143,8 +11139,6 @@ String _profileText(AppLanguage language, String key) {
     'pin_saved': '4 хонали парол сақланди.',
     'biometric_title': 'Биометрик қулф',
     'biometric_subtitle': 'Қурилма биометрик ҳимоясидан фойдаланиш',
-    'biometric_note':
-        'APK қурилмада бармоқ изи ёки Face ID мавжуд бўлса, кейинги босқичда шу созлама орқали текширув ёқилади.',
     'billing_title': 'Тўловлар ва обуна',
     'active_subscription': 'Фаол обуна',
     'available_plans': 'Мавжуд тарифлар',
@@ -11369,11 +11363,6 @@ class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
                   subtitle: t('biometric_subtitle'),
                   value: _biometricEnabled,
                   onChanged: _setBiometric,
-                ),
-                const SizedBox(height: 12),
-                _ProfileNoticeBox(
-                  icon: Icons.info_outline_rounded,
-                  text: t('biometric_note'),
                 ),
               ],
             ),
@@ -12752,38 +12741,6 @@ class _ProfileToggleRow extends StatelessWidget {
   }
 }
 
-class _ProfileNoticeBox extends StatelessWidget {
-  const _ProfileNoticeBox({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFBFDBFE)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: const Color(0xFF2563EB), size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(color: Color(0xFF475569), height: 1.45),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ProfileErrorState extends StatelessWidget {
   const _ProfileErrorState({
     required this.icon,
@@ -13085,11 +13042,8 @@ class _ProfileHeroCard extends StatelessWidget {
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 560;
           final avatarSize = compact ? 84.0 : 108.0;
-          final medalWidth = compact ? 70.0 : 118.0;
-          final medalHeight = compact ? 64.0 : 92.0;
           final cardHeight = compact ? 150.0 : 166.0;
           final leftInfo = compact ? avatarSize + 18 : avatarSize + 26;
-          final rightInfo = compact ? medalWidth + 8 : medalWidth + 18;
 
           return SizedBox(
             height: cardHeight,
@@ -13118,17 +13072,8 @@ class _ProfileHeroCard extends StatelessWidget {
                   ),
                 ),
                 Positioned(
-                  right: compact ? -2 : 2,
-                  top: compact ? 8 : 0,
-                  child: SizedBox(
-                    width: medalWidth,
-                    height: medalHeight,
-                    child: const FittedBox(child: _ProfileAchievementMedal()),
-                  ),
-                ),
-                Positioned(
                   left: leftInfo,
-                  right: rightInfo,
+                  right: compact ? 8 : 12,
                   top: compact ? 14 : 22,
                   child: _ProfileHeroInfo(
                     profile: profile,
@@ -13142,7 +13087,7 @@ class _ProfileHeroCard extends StatelessWidget {
                 ),
                 Positioned(
                   left: compact ? 4 : leftInfo,
-                  right: compact ? 4 : medalWidth + 16,
+                  right: compact ? 4 : 12,
                   bottom: compact ? 8 : 10,
                   child: _ProfileHeroMetricStrip(
                     profile: profile,
@@ -13835,86 +13780,6 @@ class _ProfileHeroMetric extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ],
-    );
-  }
-}
-
-class _ProfileAchievementMedal extends StatelessWidget {
-  const _ProfileAchievementMedal();
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Positioned(
-          bottom: 0,
-          child: Container(
-            width: 112,
-            height: 22,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: .18),
-              borderRadius: BorderRadius.circular(999),
-            ),
-          ),
-        ),
-        Container(
-          width: 104,
-          height: 104,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(26),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF9F7AEA), Color(0xFF4C1D95)],
-            ),
-            border: Border.all(color: Colors.white.withValues(alpha: .22)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: .25),
-                blurRadius: 18,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.school_rounded,
-            color: Color(0xFFC4B5FD),
-            size: 54,
-          ),
-        ),
-        Positioned(
-          left: 0,
-          bottom: 12,
-          child: Icon(
-            Icons.eco_rounded,
-            color: const Color(0xFFFFD166).withValues(alpha: .92),
-            size: 42,
-          ),
-        ),
-        Positioned(
-          right: 0,
-          bottom: 12,
-          child: Transform(
-            alignment: Alignment.center,
-            transform: Matrix4.rotationY(math.pi),
-            child: Icon(
-              Icons.eco_rounded,
-              color: const Color(0xFFFFD166).withValues(alpha: .92),
-              size: 42,
-            ),
-          ),
-        ),
-        const Positioned(
-          right: 12,
-          top: 8,
-          child: Icon(
-            Icons.auto_awesome_rounded,
-            color: Color(0xFFFFD166),
-            size: 18,
-          ),
         ),
       ],
     );
