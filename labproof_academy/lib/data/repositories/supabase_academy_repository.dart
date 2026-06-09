@@ -146,6 +146,98 @@ class SupabaseAcademyRepository {
     }, onConflict: 'section,key');
   }
 
+  Future<List<Map<String, dynamic>>> loadAdminSubscriptionPlans() async {
+    final rows = await _supabase
+        .from('subscription_plans')
+        .select(
+          'id, title, name, duration_months, duration_days, price_label, price, discount_percent, is_popular, is_active, features, sort_order, created_at, updated_at',
+        )
+        .order('sort_order')
+        .order('created_at');
+    return (rows as List<dynamic>).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> saveAdminSubscriptionPlan({
+    String? id,
+    required String name,
+    required int durationDays,
+    required num price,
+    required int discountPercent,
+    required bool isPopular,
+    required bool isActive,
+    required List<String> features,
+    required int sortOrder,
+  }) async {
+    final safePrice = price < 0 ? 0 : price;
+    final payload = <String, Object?>{
+      'title': name.trim(),
+      'name': name.trim(),
+      'duration_months': (durationDays / 30).ceil().clamp(1, 120),
+      'duration_days': durationDays.clamp(1, 3650),
+      'price': safePrice,
+      'price_label': '${_compactNumber(safePrice.round())} so‘m',
+      'discount_percent': discountPercent.clamp(0, 100),
+      'is_popular': isPopular,
+      'is_active': isActive,
+      'features': features
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toList(),
+      'sort_order': sortOrder,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+
+    if (id == null || id.trim().isEmpty) {
+      await _supabase.from('subscription_plans').insert(payload);
+      return;
+    }
+
+    await _supabase.from('subscription_plans').update(payload).eq('id', id);
+  }
+
+  Future<List<Map<String, dynamic>>> loadAdminPaymentMethods() async {
+    final rows = await _supabase
+        .from('payment_methods')
+        .select('id, name, code, is_active, sort_order, created_at, updated_at')
+        .order('sort_order')
+        .order('created_at');
+    return (rows as List<dynamic>).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> saveAdminPaymentMethod({
+    String? id,
+    required String name,
+    required String code,
+    required bool isActive,
+    required int sortOrder,
+  }) async {
+    final payload = <String, Object?>{
+      'name': name.trim(),
+      'code': code.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]+'), '_'),
+      'is_active': isActive,
+      'sort_order': sortOrder,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+
+    if (id == null || id.trim().isEmpty) {
+      await _supabase.from('payment_methods').insert(payload);
+      return;
+    }
+
+    await _supabase.from('payment_methods').update(payload).eq('id', id);
+  }
+
+  static String _compactNumber(int value) {
+    final raw = value.toString();
+    final buffer = StringBuffer();
+    for (var index = 0; index < raw.length; index++) {
+      final left = raw.length - index;
+      buffer.write(raw[index]);
+      if (left > 1 && left % 3 == 1) buffer.write(' ');
+    }
+    return buffer.toString();
+  }
+
   Future<List<StudentNotification>> loadNotifications({int limit = 20}) async {
     final user = await _currentUserOrThrow();
     final rows = await _supabase
@@ -577,6 +669,41 @@ class SupabaseAcademyRepository {
       }
     }
 
+    Future<Map<String, dynamic>?> readProfileSubscription() async {
+      try {
+        final row = await _supabase
+            .from('profiles')
+            .select(
+              'is_premium, premium_plan_id, premium_start_date, premium_end_date, subscription_plans(name, title, price, duration_days)',
+            )
+            .eq('id', user.id)
+            .maybeSingle();
+        if (row == null) return null;
+        return row;
+      } on Object {
+        return null;
+      }
+    }
+
+    final profileSubscription = await readProfileSubscription();
+    final activeProfileSubscription = profileSubscription == null
+        ? <Map<String, dynamic>>[]
+        : <Map<String, dynamic>>[
+            {
+              'id': profileSubscription['premium_plan_id'],
+              'plan_key':
+                  profileSubscription['subscription_plans']?['name'] ??
+                  profileSubscription['subscription_plans']?['title'] ??
+                  'Premium',
+              'status': profileSubscription['is_premium'] == true
+                  ? 'active'
+                  : 'inactive',
+              'current_period_start': profileSubscription['premium_start_date'],
+              'current_period_end': profileSubscription['premium_end_date'],
+              'subscription_plans': profileSubscription['subscription_plans'],
+            },
+          ];
+
     final subscriptions = await readUserRows(
       'subscriptions',
       'id, plan_key, billing_interval, status, amount, currency, current_period_start, current_period_end, created_at',
@@ -586,20 +713,115 @@ class SupabaseAcademyRepository {
       'id, status, starts_at, ends_at, created_at, subscription_plans(title, price_label, duration_months)',
     );
     final transactions = await readUserRows(
-      'transactions',
-      'id, provider, amount, currency, status, created_at',
+      'subscription_payments',
+      'id, amount, currency, status, created_at, paid_at, subscription_plans(name, title), payment_methods(name, code)',
     );
     final plans = await readRows(
       'subscription_plans',
-      'id, title, duration_months, price_label, is_active, created_at',
+      'id, title, name, duration_months, duration_days, price_label, price, discount_percent, is_popular, is_active, features, sort_order, created_at',
+    );
+    final paymentMethods = await readRows(
+      'payment_methods',
+      'id, name, code, is_active, sort_order, created_at',
     );
 
     return {
-      'subscriptions': subscriptions,
+      'subscriptions': [...activeProfileSubscription, ...subscriptions],
       'legacySubscriptions': legacySubscriptions,
       'transactions': transactions,
-      'plans': plans.where((row) => row['is_active'] != false).toList(),
+      'plans': plans.where((row) => row['is_active'] != false).toList()
+        ..sort(
+          (a, b) => ((a['sort_order'] as num?)?.toInt() ?? 0).compareTo(
+            (b['sort_order'] as num?)?.toInt() ?? 0,
+          ),
+        ),
+      'paymentMethods':
+          paymentMethods.where((row) => row['is_active'] != false).toList()
+            ..sort(
+              (a, b) => ((a['sort_order'] as num?)?.toInt() ?? 0).compareTo(
+                (b['sort_order'] as num?)?.toInt() ?? 0,
+              ),
+            ),
     };
+  }
+
+  Future<String> purchaseSubscription({
+    required String planId,
+    required String paymentMethodId,
+  }) async {
+    final response = await _supabase.rpc<String>(
+      'purchase_subscription',
+      params: {'p_plan_id': planId, 'p_payment_method_id': paymentMethodId},
+    );
+    return response;
+  }
+
+  Future<Map<String, List<Map<String, dynamic>>>>
+  loadStudentSecurityAudit() async {
+    final user = await _currentUserOrThrow();
+
+    Future<List<Map<String, dynamic>>> readRows(
+      String table,
+      String select,
+    ) async {
+      try {
+        final rows = await _supabase
+            .from(table)
+            .select(select)
+            .eq('user_id', user.id)
+            .order('created_at', ascending: false)
+            .limit(12);
+        return (rows as List<dynamic>).cast<Map<String, dynamic>>();
+      } on Object {
+        return const <Map<String, dynamic>>[];
+      }
+    }
+
+    final devices = await readRows(
+      'devices',
+      'id, device_name, platform, browser, ip_address, location, last_seen_at, revoked_at, created_at',
+    );
+    final legacySessions = devices.isEmpty
+        ? await readRows(
+            'active_sessions',
+            'id, device_name, browser, ip_address, location, last_seen_at, revoked_at, created_at',
+          )
+        : const <Map<String, dynamic>>[];
+
+    return {
+      'devices': devices.isNotEmpty ? devices : legacySessions,
+      'loginHistory': await readRows(
+        'login_history',
+        'id, ip_address, user_agent, location, success, created_at',
+      ),
+    };
+  }
+
+  Future<void> saveStudentSecurityPreferences({
+    required bool pinEnabled,
+    required bool biometricEnabled,
+  }) async {
+    final user = await _currentUserOrThrow();
+    try {
+      await _supabase.from('user_security').upsert({
+        'user_id': user.id,
+        'pin_enabled': pinEnabled,
+        'biometric_enabled': biometricEnabled,
+        'pin_updated_at': pinEnabled ? DateTime.now().toIso8601String() : null,
+        'biometric_updated_at': biometricEnabled
+            ? DateTime.now().toIso8601String()
+            : null,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+    } on Object {
+      // The secure PIN itself is local-only. If the remote metadata table is not
+      // applied yet, keep the local security setting working.
+    }
+  }
+
+  Future<void> signOutEverywhere() async {
+    await _currentUserOrThrow();
+    await _supabase.auth.signOut(scope: SignOutScope.global);
   }
 
   Future<String> uploadProfileAvatar({

@@ -1,5 +1,6 @@
 // ignore_for_file: unused_element, unused_element_parameter
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -9957,160 +9958,7 @@ class _RealSettingsPageState extends State<_RealSettingsPage> {
   }
 
   Widget _buildPaymentSettings(AdminDashboardData data) {
-    return Column(
-      children: [
-        _AdminSummaryStrip(
-          items: [
-            const _AdminSummaryCardData(
-              title: 'Oylik daromad',
-              value: '124,560,000 so‘m',
-              subtitle: '↑ 18.5%',
-              icon: Icons.account_balance_wallet_rounded,
-              color: AppColors.primaryBlue,
-            ),
-            const _AdminSummaryCardData(
-              title: 'Muvaffaqiyatli to‘lovlar',
-              value: '2,453 ta',
-              subtitle: '↑ 15.2%',
-              icon: Icons.credit_score_rounded,
-              color: AppColors.successGreen,
-            ),
-            _AdminSummaryCardData(
-              title: 'Faol obunalar',
-              value: data.activeUsersCount.toString(),
-              subtitle: 'Real foydalanuvchilar',
-              icon: Icons.groups_rounded,
-              color: AppColors.violet,
-            ),
-            const _AdminSummaryCardData(
-              title: 'Muvaffaqiyatsiz to‘lovlar',
-              value: '32 ta',
-              subtitle: '↓ 8.3%',
-              icon: Icons.warning_amber_rounded,
-              color: AppColors.errorRed,
-            ),
-            const _AdminSummaryCardData(
-              title: 'Jami tushum',
-              value: '856,320,000 so‘m',
-              subtitle: '↑ 20.4%',
-              icon: Icons.savings_rounded,
-              color: AppColors.primaryBlue,
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _settingsResponsivePair(
-          _AdminSectionSurface(
-            title: 'Daromad statistikasi',
-            child: EmptyChart(
-              values: const [21, 45, 70, 58, 83, 71, 76, 104, 72, 64, 98, 132],
-              height: 220,
-            ),
-          ),
-          _AdminSectionSurface(
-            title: 'To‘lov usullari',
-            child: Column(
-              children: const [
-                _SettingsPaymentRow(
-                  name: 'Click',
-                  fee: '1.5%',
-                  color: Color(0xFF6D28D9),
-                ),
-                _SettingsPaymentRow(
-                  name: 'Payme',
-                  fee: '1.6%',
-                  color: Color(0xFF22C6C8),
-                ),
-                _SettingsPaymentRow(
-                  name: 'Uzum Bank',
-                  fee: '1.7%',
-                  color: Color(0xFF6D28D9),
-                ),
-                _SettingsPaymentRow(
-                  name: 'Stripe',
-                  fee: '2.9%',
-                  color: Color(0xFF2563EB),
-                ),
-                _SettingsPaymentRow(
-                  name: 'PayPal',
-                  fee: '3.4%',
-                  color: Color(0xFF0EA5E9),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        _settingsResponsiveGrid([
-          _AdminSectionSurface(
-            title: 'Obuna rejalari',
-            child: const _SubscriptionPlansPreview(),
-          ),
-          _AdminSectionSurface(
-            title: 'So‘nggi tranzaksiyalar',
-            child: _AdminTable(
-              columns: const [
-                'Talaba',
-                'Summa',
-                'To‘lov usuli',
-                'Status',
-                'Sana',
-              ],
-              rows: const [
-                [
-                  'Alisher Usmonov',
-                  '99,000 so‘m',
-                  'Payme',
-                  'Faol',
-                  '15.05.2025 14:25',
-                ],
-                [
-                  'Madina Karimova',
-                  '49,000 so‘m',
-                  'Click',
-                  'Faol',
-                  '15.05.2025 13:10',
-                ],
-                [
-                  'Bobur Abdullayev',
-                  '199,000 so‘m',
-                  'Uzum Bank',
-                  'Faol',
-                  '15.05.2025 12:45',
-                ],
-                [
-                  'Dilshod Sodiqov',
-                  '99,000 so‘m',
-                  'Payme',
-                  'pending',
-                  '15.05.2025 11:30',
-                ],
-              ],
-              compact: true,
-              minWidth: 700,
-            ),
-          ),
-          _AdminSectionSurface(
-            title: 'To‘lov avtomatik sozlamalari',
-            child: Column(
-              children: const [
-                _SettingsSwitchRow(
-                  icon: Icons.autorenew_rounded,
-                  label: 'Obunani avtomatik yangilash',
-                  value: true,
-                ),
-                _SettingsSwitchRow(
-                  icon: Icons.notifications_active_rounded,
-                  label: 'To‘lov eslatmalari',
-                  value: true,
-                ),
-                _SettingsInfoRow(label: 'Soliq va QQS', value: '12%'),
-              ],
-            ),
-          ),
-        ]),
-      ],
-    );
+    return _AdminPremiumSettingsPanel(activeUsersCount: data.activeUsersCount);
   }
 
   Widget _buildIntegrationSettings(AdminDashboardData data) {
@@ -18548,6 +18396,650 @@ class _WorldMapPreview extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AdminPremiumSettingsPanel extends StatefulWidget {
+  const _AdminPremiumSettingsPanel({required this.activeUsersCount});
+
+  final int activeUsersCount;
+
+  @override
+  State<_AdminPremiumSettingsPanel> createState() =>
+      _AdminPremiumSettingsPanelState();
+}
+
+class _AdminPremiumSettingsPanelState
+    extends State<_AdminPremiumSettingsPanel> {
+  static const _repository = SupabaseAcademyRepository();
+
+  late Future<
+    ({List<Map<String, dynamic>> plans, List<Map<String, dynamic>> methods})
+  >
+  _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<
+    ({List<Map<String, dynamic>> plans, List<Map<String, dynamic>> methods})
+  >
+  _load() async {
+    final plans = await _repository.loadAdminSubscriptionPlans();
+    final methods = await _repository.loadAdminPaymentMethods();
+    return (plans: plans, methods: methods);
+  }
+
+  void _reload() {
+    setState(() => _future = _load());
+  }
+
+  String _money(Object? value) {
+    final amount = value is num ? value.round() : int.tryParse('$value') ?? 0;
+    final raw = amount.toString();
+    final buffer = StringBuffer();
+    for (var index = 0; index < raw.length; index++) {
+      final left = raw.length - index;
+      buffer.write(raw[index]);
+      if (left > 1 && left % 3 == 1) buffer.write(' ');
+    }
+    return '${buffer.toString()} so‘m';
+  }
+
+  Future<void> _editPlan(Map<String, dynamic>? plan) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => _AdminSubscriptionPlanDialog(plan: plan),
+    );
+    if (saved == true && mounted) _reload();
+  }
+
+  Future<void> _editMethod(Map<String, dynamic>? method) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => _AdminPaymentMethodDialog(method: method),
+    );
+    if (saved == true && mounted) _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<
+      ({List<Map<String, dynamic>> plans, List<Map<String, dynamic>> methods})
+    >(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return _AdminErrorState(
+            message: snapshot.error.toString(),
+            onRetry: _reload,
+          );
+        }
+        final data = snapshot.data!;
+        final activePlans = data.plans
+            .where((row) => row['is_active'] != false)
+            .length;
+        final activeMethods = data.methods
+            .where((row) => row['is_active'] != false)
+            .length;
+        return Column(
+          children: [
+            _AdminSummaryStrip(
+              items: [
+                _AdminSummaryCardData(
+                  title: 'Faol obunalar',
+                  value: widget.activeUsersCount.toString(),
+                  subtitle: 'Premium foydalanuvchilar',
+                  icon: Icons.workspace_premium_rounded,
+                  color: AppColors.violet,
+                ),
+                _AdminSummaryCardData(
+                  title: 'Faol tariflar',
+                  value: activePlans.toString(),
+                  subtitle: 'Mobil ilovada ko‘rinadi',
+                  icon: Icons.sell_rounded,
+                  color: AppColors.primaryBlue,
+                ),
+                _AdminSummaryCardData(
+                  title: 'To‘lov usullari',
+                  value: activeMethods.toString(),
+                  subtitle: 'Aktiv providerlar',
+                  icon: Icons.payments_rounded,
+                  color: AppColors.successGreen,
+                ),
+                const _AdminSummaryCardData(
+                  title: 'Webhook',
+                  value: 'REST',
+                  subtitle: '/subscriptions/purchase',
+                  icon: Icons.webhook_rounded,
+                  color: AppColors.amber,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _AdminSectionSurface(
+              title: 'Obuna tariflari',
+              action: _AdminPrimaryActionButton(
+                label: 'Yangi tarif',
+                icon: Icons.add_rounded,
+                onPressed: () => unawaited(_editPlan(null)),
+              ),
+              child: Column(
+                children: [
+                  if (data.plans.isEmpty)
+                    const _AdminActionTile(
+                      icon: Icons.sell_outlined,
+                      title: 'Tariflar yo‘q',
+                      subtitle: 'Yangi tarif qo‘shilsa, mobil ilovada chiqadi',
+                      color: AppColors.muted,
+                    )
+                  else
+                    for (final plan in data.plans)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _AdminSubscriptionPlanRow(
+                          plan: plan,
+                          price: _money(plan['price']),
+                          onEdit: () => unawaited(_editPlan(plan)),
+                        ),
+                      ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final methods = _AdminSectionSurface(
+                  title: 'To‘lov usullari',
+                  action: _AdminPrimaryActionButton(
+                    label: 'Usul qo‘shish',
+                    icon: Icons.add_card_rounded,
+                    onPressed: () => unawaited(_editMethod(null)),
+                  ),
+                  child: Column(
+                    children: [
+                      for (final method in data.methods)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: _AdminPaymentMethodManageRow(
+                            method: method,
+                            onEdit: () => unawaited(_editMethod(method)),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+                const api = _AdminSectionSurface(
+                  title: 'API oqimi',
+                  child: Column(
+                    children: [
+                      _AdminActionTile(
+                        icon: Icons.cloud_download_rounded,
+                        title: 'GET /subscriptions/plans',
+                        subtitle: 'Faqat isActive=true tariflarni qaytaradi',
+                        color: AppColors.primaryBlue,
+                      ),
+                      SizedBox(height: 10),
+                      _AdminActionTile(
+                        icon: Icons.account_balance_wallet_rounded,
+                        title: 'GET /payment-methods',
+                        subtitle: 'Faqat faol to‘lov usullari ko‘rinadi',
+                        color: AppColors.successGreen,
+                      ),
+                      SizedBox(height: 10),
+                      _AdminActionTile(
+                        icon: Icons.verified_rounded,
+                        title: 'POST /subscriptions/purchase',
+                        subtitle: 'Webhook tasdiqlasa premium faollashadi',
+                        color: AppColors.violet,
+                      ),
+                    ],
+                  ),
+                );
+                if (constraints.maxWidth > 900) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: methods),
+                      const SizedBox(width: 16),
+                      const Expanded(child: api),
+                    ],
+                  );
+                }
+                return Column(
+                  children: [methods, const SizedBox(height: 16), api],
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AdminSubscriptionPlanRow extends StatelessWidget {
+  const _AdminSubscriptionPlanRow({
+    required this.plan,
+    required this.price,
+    required this.onEdit,
+  });
+
+  final Map<String, dynamic> plan;
+  final String price;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = plan['is_active'] != false;
+    final popular = plan['is_popular'] == true;
+    final features = plan['features'];
+    final featureText = features is List
+        ? features.map((value) => value.toString()).join(', ')
+        : 'Barcha kurslar, Sertifikat, Progress kuzatish, Reklamasiz';
+    return AppCard(
+      child: Row(
+        children: [
+          IconBadge(
+            icon: popular
+                ? Icons.star_rounded
+                : Icons.workspace_premium_rounded,
+            color: popular ? AppColors.amber : AppColors.violet,
+            size: 48,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      (plan['name'] ?? plan['title'] ?? 'Premium').toString(),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    StatusChip(
+                      label: active ? 'Faol' : 'Nofaol',
+                      color: active ? AppColors.successGreen : AppColors.muted,
+                    ),
+                    if (popular)
+                      const StatusChip(
+                        label: 'Eng ommabop',
+                        color: AppColors.amber,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${plan['duration_days'] ?? 30} kun • $price • ${plan['discount_percent'] ?? 0}% chegirma',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.muted,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  featureText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_rounded),
+            tooltip: 'Tahrirlash',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminPaymentMethodManageRow extends StatelessWidget {
+  const _AdminPaymentMethodManageRow({
+    required this.method,
+    required this.onEdit,
+  });
+
+  final Map<String, dynamic> method;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = method['is_active'] != false;
+    return AppCard(
+      child: Row(
+        children: [
+          IconBadge(
+            icon: Icons.account_balance_wallet_rounded,
+            color: active ? AppColors.primaryBlue : AppColors.muted,
+            size: 44,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  (method['name'] ?? 'To‘lov usuli').toString(),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  (method['code'] ?? '').toString(),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          StatusChip(
+            label: active ? 'Faol' : 'Nofaol',
+            color: active ? AppColors.successGreen : AppColors.muted,
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            onPressed: onEdit,
+            icon: const Icon(Icons.tune_rounded),
+            tooltip: 'Sozlash',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminSubscriptionPlanDialog extends StatefulWidget {
+  const _AdminSubscriptionPlanDialog({required this.plan});
+
+  final Map<String, dynamic>? plan;
+
+  @override
+  State<_AdminSubscriptionPlanDialog> createState() =>
+      _AdminSubscriptionPlanDialogState();
+}
+
+class _AdminSubscriptionPlanDialogState
+    extends State<_AdminSubscriptionPlanDialog> {
+  static const _repository = SupabaseAcademyRepository();
+
+  late final TextEditingController _name;
+  late final TextEditingController _durationDays;
+  late final TextEditingController _price;
+  late final TextEditingController _discount;
+  late final TextEditingController _sortOrder;
+  late final TextEditingController _features;
+  bool _active = true;
+  bool _popular = false;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final plan = widget.plan;
+    final features = plan?['features'];
+    _name = TextEditingController(
+      text: (plan?['name'] ?? plan?['title'] ?? '').toString(),
+    );
+    _durationDays = TextEditingController(
+      text: (plan?['duration_days'] ?? 30).toString(),
+    );
+    _price = TextEditingController(text: (plan?['price'] ?? 0).toString());
+    _discount = TextEditingController(
+      text: (plan?['discount_percent'] ?? 0).toString(),
+    );
+    _sortOrder = TextEditingController(
+      text: (plan?['sort_order'] ?? 0).toString(),
+    );
+    _features = TextEditingController(
+      text: features is List
+          ? features.join(', ')
+          : 'Barcha kurslar, Sertifikat, Progress kuzatish, Reklamasiz',
+    );
+    _active = plan?['is_active'] != false;
+    _popular = plan?['is_popular'] == true;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _durationDays.dispose();
+    _price.dispose();
+    _discount.dispose();
+    _sortOrder.dispose();
+    _features.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await _repository.saveAdminSubscriptionPlan(
+        id: widget.plan?['id']?.toString(),
+        name: _name.text,
+        durationDays: int.tryParse(_durationDays.text.trim()) ?? 30,
+        price: num.tryParse(_price.text.trim().replaceAll(' ', '')) ?? 0,
+        discountPercent: int.tryParse(_discount.text.trim()) ?? 0,
+        isPopular: _popular,
+        isActive: _active,
+        features: _features.text.split(','),
+        sortOrder: int.tryParse(_sortOrder.text.trim()) ?? 0,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Tarif saqlanmadi: $error')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.plan == null ? 'Yangi tarif' : 'Tarifni tahrirlash'),
+      content: SingleChildScrollView(
+        child: SizedBox(
+          width: 520,
+          child: Column(
+            children: [
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'Tarif nomi'),
+              ),
+              TextField(
+                controller: _durationDays,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Davomiyligi (kun)',
+                ),
+              ),
+              TextField(
+                controller: _price,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Narxi'),
+              ),
+              TextField(
+                controller: _discount,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Chegirma foizi'),
+              ),
+              TextField(
+                controller: _sortOrder,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Tartiblash'),
+              ),
+              TextField(
+                controller: _features,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Afzalliklar (vergul bilan)',
+                ),
+              ),
+              SwitchListTile(
+                value: _popular,
+                onChanged: (value) => setState(() => _popular = value),
+                title: const Text('Eng ommabop tarif'),
+              ),
+              SwitchListTile(
+                value: _active,
+                onChanged: (value) => setState(() => _active = value),
+                title: const Text('Faol'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Bekor qilish'),
+        ),
+        FilledButton.icon(
+          onPressed: _saving ? null : () => unawaited(_save()),
+          icon: Icon(
+            _saving ? Icons.hourglass_top_rounded : Icons.save_rounded,
+          ),
+          label: Text(_saving ? 'Saqlanmoqda' : 'Saqlash'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminPaymentMethodDialog extends StatefulWidget {
+  const _AdminPaymentMethodDialog({required this.method});
+
+  final Map<String, dynamic>? method;
+
+  @override
+  State<_AdminPaymentMethodDialog> createState() =>
+      _AdminPaymentMethodDialogState();
+}
+
+class _AdminPaymentMethodDialogState extends State<_AdminPaymentMethodDialog> {
+  static const _repository = SupabaseAcademyRepository();
+
+  late final TextEditingController _name;
+  late final TextEditingController _code;
+  late final TextEditingController _sortOrder;
+  bool _active = true;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(
+      text: (widget.method?['name'] ?? '').toString(),
+    );
+    _code = TextEditingController(
+      text: (widget.method?['code'] ?? '').toString(),
+    );
+    _sortOrder = TextEditingController(
+      text: (widget.method?['sort_order'] ?? 0).toString(),
+    );
+    _active = widget.method?['is_active'] != false;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _code.dispose();
+    _sortOrder.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await _repository.saveAdminPaymentMethod(
+        id: widget.method?['id']?.toString(),
+        name: _name.text,
+        code: _code.text,
+        isActive: _active,
+        sortOrder: int.tryParse(_sortOrder.text.trim()) ?? 0,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('To‘lov usuli saqlanmadi: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        widget.method == null ? 'Yangi to‘lov usuli' : 'To‘lov usuli',
+      ),
+      content: SizedBox(
+        width: 460,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _name,
+              decoration: const InputDecoration(labelText: 'Nomi'),
+            ),
+            TextField(
+              controller: _code,
+              decoration: const InputDecoration(
+                labelText: 'Kod (click, payme...)',
+              ),
+            ),
+            TextField(
+              controller: _sortOrder,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Tartiblash'),
+            ),
+            SwitchListTile(
+              value: _active,
+              onChanged: (value) => setState(() => _active = value),
+              title: const Text('Faol'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Bekor qilish'),
+        ),
+        FilledButton.icon(
+          onPressed: _saving ? null : () => unawaited(_save()),
+          icon: Icon(
+            _saving ? Icons.hourglass_top_rounded : Icons.save_rounded,
+          ),
+          label: Text(_saving ? 'Saqlanmoqda' : 'Saqlash'),
+        ),
+      ],
     );
   }
 }

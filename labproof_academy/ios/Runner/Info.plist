@@ -28,6 +28,8 @@
 	<string>LabProof Academy yordam chatida video yoki dumaloq video yuborish uchun kamera kerak.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>LabProof Academy yordam chatida ovozli xabar yuborish uchun mikrofon kerak.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>LabProof Academy hisobingizni biometrik himoya bilan ochish uchun Face ID ishlatadi.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>LabProof Academy yordam chatida rasm, video yoki fayl biriktirish uchun galereya kerak.</string>
 	<key>UILaunchStoryboardName</key>

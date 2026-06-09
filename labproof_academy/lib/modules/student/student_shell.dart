@@ -1,11 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -65,9 +69,132 @@ class StudentShell extends StatefulWidget {
   State<StudentShell> createState() => _StudentShellState();
 }
 
+class _StudentSecurityStore {
+  const _StudentSecurityStore._();
+
+  static const _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+    ),
+  );
+  static const _pinHashKey = 'student_security_pin_hash_v2';
+  static const _legacyPinKey = 'student_security_pin';
+  static const _biometricKey = 'student_biometric_lock';
+  static const _failedAttemptsKey = 'student_security_failed_attempts';
+  static const _lockedUntilKey = 'student_security_locked_until';
+
+  static String hashPin(String pin) =>
+      sha256.convert(utf8.encode('labproof:$pin')).toString();
+
+  static bool isWeakPin(String pin) {
+    const blocked = {'0000', '1111', '1234', '2222'};
+    if (blocked.contains(pin)) return true;
+    final sameDigits = pin.split('').toSet().length == 1;
+    return sameDigits;
+  }
+
+  static Future<String> readPinHash() async {
+    final storedHash = await _secureStorage.read(key: _pinHashKey);
+    if (storedHash != null && storedHash.isNotEmpty) return storedHash;
+
+    final prefs = await SharedPreferences.getInstance();
+    final legacyPin = prefs.getString(_legacyPinKey) ?? '';
+    if (legacyPin.isNotEmpty) {
+      final migratedHash = hashPin(legacyPin);
+      await _secureStorage.write(key: _pinHashKey, value: migratedHash);
+      await prefs.remove(_legacyPinKey);
+      return migratedHash;
+    }
+    return '';
+  }
+
+  static Future<void> savePin(String pin) async {
+    await _secureStorage.write(key: _pinHashKey, value: hashPin(pin));
+    await resetFailedAttempts();
+  }
+
+  static Future<void> removePin() async {
+    await _secureStorage.delete(key: _pinHashKey);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_legacyPinKey);
+    await resetFailedAttempts();
+  }
+
+  static Future<bool> isBiometricEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_biometricKey) ?? false;
+  }
+
+  static Future<void> setBiometricEnabled(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_biometricKey, value);
+  }
+
+  static Future<DateTime?> lockedUntil() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_lockedUntilKey);
+    if (raw == null || raw.isEmpty) return null;
+    final value = DateTime.tryParse(raw);
+    if (value == null || value.isBefore(DateTime.now())) {
+      await prefs.remove(_lockedUntilKey);
+      return null;
+    }
+    return value;
+  }
+
+  static Future<void> registerFailedAttempt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final next = (prefs.getInt(_failedAttemptsKey) ?? 0) + 1;
+    await prefs.setInt(_failedAttemptsKey, next);
+    if (next >= 5) {
+      await prefs.setString(
+        _lockedUntilKey,
+        DateTime.now().add(const Duration(minutes: 30)).toIso8601String(),
+      );
+      await prefs.setInt(_failedAttemptsKey, 0);
+    }
+  }
+
+  static Future<void> resetFailedAttempts() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_failedAttemptsKey);
+    await prefs.remove(_lockedUntilKey);
+  }
+}
+
+class _StudentBiometricAuth {
+  const _StudentBiometricAuth._();
+
+  static final LocalAuthentication _auth = LocalAuthentication();
+
+  static Future<bool> canCheck() async {
+    try {
+      return await _auth.canCheckBiometrics || await _auth.isDeviceSupported();
+    } on Object {
+      return false;
+    }
+  }
+
+  static Future<bool> authenticate({required String reason}) async {
+    try {
+      final supported = await canCheck();
+      if (!supported) return false;
+      return _auth.authenticate(
+        localizedReason: reason,
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+    } on Object {
+      return false;
+    }
+  }
+}
+
 class _StudentShellState extends State<StudentShell> {
   static const _repository = SupabaseAcademyRepository();
-  static const _securityPinKey = 'student_security_pin';
   static const _appVersionName = String.fromEnvironment(
     'APP_VERSION_NAME',
     defaultValue: '1.2.0',
@@ -95,7 +222,9 @@ class _StudentShellState extends State<StudentShell> {
   bool _loading = true;
   bool _checkingSecurity = true;
   bool _lockedByPin = false;
-  String _savedSecurityPin = '';
+  String _savedSecurityPinHash = '';
+  bool _biometricSecurityEnabled = false;
+  DateTime? _securityLockedUntil;
   String? _loadError;
 
   @override
@@ -112,28 +241,66 @@ class _StudentShellState extends State<StudentShell> {
     );
   }
 
-  Future<void> _loadSecurityLock() async {
-    final prefs = await SharedPreferences.getInstance();
-    final pin = prefs.getString(_securityPinKey) ?? '';
+  Future<void> _loadSecurityLock({bool lockNow = true}) async {
+    final pinHash = await _StudentSecurityStore.readPinHash();
+    final biometricEnabled = await _StudentSecurityStore.isBiometricEnabled();
+    final lockedUntil = await _StudentSecurityStore.lockedUntil();
     if (!mounted) return;
     setState(() {
-      _savedSecurityPin = pin;
-      _lockedByPin = pin.isNotEmpty;
+      _savedSecurityPinHash = pinHash;
+      _biometricSecurityEnabled = biometricEnabled;
+      _securityLockedUntil = lockedUntil;
+      if (lockNow) _lockedByPin = pinHash.isNotEmpty || biometricEnabled;
       _checkingSecurity = false;
     });
   }
 
-  void _unlockWithPin(String pin) {
-    if (pin == _savedSecurityPin) {
-      setState(() => _lockedByPin = false);
-      return;
+  Future<bool> _unlockWithPin(String pin) async {
+    final lockedUntil = await _StudentSecurityStore.lockedUntil();
+    if (lockedUntil != null) {
+      if (mounted) {
+        setState(() => _securityLockedUntil = lockedUntil);
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(
+            content: Text('Hisob 30 daqiqaga bloklangan.'),
+            backgroundColor: AppColors.errorRed,
+          ),
+        );
+      }
+      return false;
     }
+
+    if (_StudentSecurityStore.hashPin(pin) == _savedSecurityPinHash) {
+      await _StudentSecurityStore.resetFailedAttempts();
+      setState(() => _lockedByPin = false);
+      return true;
+    }
+    await _StudentSecurityStore.registerFailedAttempt();
+    final nextLockedUntil = await _StudentSecurityStore.lockedUntil();
+    if (!mounted) return false;
+    setState(() => _securityLockedUntil = nextLockedUntil);
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-        content: Text('PIN noto‘g‘ri kiritildi.'),
+      SnackBar(
+        content: Text(
+          nextLockedUntil == null
+              ? 'PIN noto‘g‘ri.'
+              : 'Hisob 30 daqiqaga bloklandi.',
+        ),
         backgroundColor: AppColors.errorRed,
       ),
     );
+    return false;
+  }
+
+  Future<bool> _unlockWithBiometric() async {
+    if (!_biometricSecurityEnabled) return false;
+    final authenticated = await _StudentBiometricAuth.authenticate(
+      reason: 'LabProof Academy ilovasiga kirish uchun tasdiqlang',
+    );
+    if (authenticated && mounted) {
+      setState(() => _lockedByPin = false);
+    }
+    return authenticated;
   }
 
   @override
@@ -787,7 +954,10 @@ class _StudentShellState extends State<StudentShell> {
                   child: isSecurityLocked
                       ? _StudentPinLockScreen(
                           loading: _checkingSecurity,
+                          biometricEnabled: _biometricSecurityEnabled,
+                          lockedUntil: _securityLockedUntil,
                           onUnlock: _unlockWithPin,
+                          onBiometricUnlock: _unlockWithBiometric,
                         )
                       : _data == null
                       ? _buildTabContent()
@@ -904,6 +1074,7 @@ class _StudentShellState extends State<StudentShell> {
             onContactAdmin: _openAdminSupportSheet,
             onCheckForUpdate: _checkForUpdateManually,
             onSignOut: widget.onSignOut,
+            onSecurityChanged: () => _loadSecurityLock(lockNow: false),
             appVersionName: _appVersionName,
             notificationCount: _unreadNotificationCount,
             onNotifications: _openNotifications,
@@ -982,6 +1153,7 @@ class _StudentShellState extends State<StudentShell> {
             onContactAdmin: _openAdminSupportSheet,
             onCheckForUpdate: _checkForUpdateManually,
             onSignOut: widget.onSignOut,
+            onSecurityChanged: () => _loadSecurityLock(lockNow: false),
             appVersionName: _appVersionName,
             notificationCount: _unreadNotificationCount,
             onNotifications: _openNotifications,
@@ -1220,29 +1392,62 @@ String _t(BuildContext context, String key) {
 }
 
 class _StudentPinLockScreen extends StatefulWidget {
-  const _StudentPinLockScreen({required this.loading, required this.onUnlock});
+  const _StudentPinLockScreen({
+    required this.loading,
+    required this.biometricEnabled,
+    required this.lockedUntil,
+    required this.onUnlock,
+    required this.onBiometricUnlock,
+  });
 
   final bool loading;
-  final ValueChanged<String> onUnlock;
+  final bool biometricEnabled;
+  final DateTime? lockedUntil;
+  final Future<bool> Function(String pin) onUnlock;
+  final Future<bool> Function() onBiometricUnlock;
 
   @override
   State<_StudentPinLockScreen> createState() => _StudentPinLockScreenState();
 }
 
 class _StudentPinLockScreenState extends State<_StudentPinLockScreen> {
-  final _controller = TextEditingController();
+  String _pin = '';
+  bool _checking = false;
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
+  bool get _isLocked {
+    final lockedUntil = widget.lockedUntil;
+    return lockedUntil != null && lockedUntil.isAfter(DateTime.now());
   }
 
-  void _submit() {
-    final pin = _controller.text.trim();
-    if (pin.length != 4) return;
-    widget.onUnlock(pin);
-    _controller.clear();
+  Future<void> _append(String value) async {
+    if (_checking || _isLocked || _pin.length >= 4) return;
+    HapticFeedback.selectionClick();
+    setState(() => _pin += value);
+    if (_pin.length == 4) {
+      setState(() => _checking = true);
+      final ok = await widget.onUnlock(_pin);
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        if (!ok) _pin = '';
+      });
+    }
+  }
+
+  void _backspace() {
+    if (_pin.isEmpty || _checking) return;
+    setState(() => _pin = _pin.substring(0, _pin.length - 1));
+  }
+
+  Future<void> _biometric() async {
+    if (!widget.biometricEnabled || _checking) return;
+    setState(() => _checking = true);
+    final ok = await widget.onBiometricUnlock();
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      if (!ok) _pin = '';
+    });
   }
 
   @override
@@ -1251,74 +1456,201 @@ class _StudentPinLockScreenState extends State<_StudentPinLockScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final lockedUntil = widget.lockedUntil;
+    final lockText = lockedUntil == null
+        ? ''
+        : '${lockedUntil.hour.toString().padLeft(2, '0')}:${lockedUntil.minute.toString().padLeft(2, '0')} gacha bloklangan';
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Container(
-          width: double.infinity,
-          constraints: const BoxConstraints(maxWidth: 360),
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: AppColors.border),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.navy.withValues(alpha: .08),
-                blurRadius: 24,
-                offset: const Offset(0, 14),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.school_rounded,
+              color: AppColors.studentPrimary,
+              size: 82,
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Academy',
+              style: TextStyle(
+                color: Color(0xFF0F172A),
+                fontSize: 30,
+                fontWeight: FontWeight.w900,
               ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const IconBadge(
-                icon: Icons.lock_rounded,
-                color: AppColors.studentPrimary,
-                size: 58,
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Hisobingiz himoyalangan',
+              style: TextStyle(
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w800,
               ),
-              const SizedBox(height: 16),
-              Text(
-                'PIN kiriting',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Ilovaga kirish uchun 4 xonali parolni yozing.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 18),
-              TextField(
-                controller: _controller,
-                autofocus: true,
-                obscureText: true,
-                textAlign: TextAlign.center,
-                keyboardType: TextInputType.number,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(4),
+            ),
+            const SizedBox(height: 36),
+            Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxWidth: 390),
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: .86),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(color: const Color(0xFFE6DEFF)),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.studentPrimary.withValues(alpha: .07),
+                    blurRadius: 30,
+                    offset: const Offset(0, 16),
+                  ),
                 ],
-                onChanged: (value) {
-                  if (value.length == 4) _submit();
-                },
-                onSubmitted: (_) => _submit(),
-                decoration: const InputDecoration(
-                  hintText: '••••',
-                  prefixIcon: Icon(Icons.pin_rounded),
-                ),
               ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _submit,
-                  icon: const Icon(Icons.lock_open_rounded),
-                  label: const Text('Kirish'),
-                ),
+              child: Column(
+                children: [
+                  const IconBadge(
+                    icon: Icons.lock_rounded,
+                    color: AppColors.studentPrimary,
+                    size: 58,
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'PIN kodni kiriting',
+                    style: TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _isLocked
+                        ? lockText
+                        : 'Ilovaga kirish uchun PIN kodni kiriting',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _isLocked
+                          ? AppColors.errorRed
+                          : const Color(0xFF64748B),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(
+                      4,
+                      (index) => Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 11),
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: index < _pin.length
+                              ? AppColors.studentPrimary
+                              : Colors.transparent,
+                          border: Border.all(
+                            color: AppColors.studentPrimary,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  GridView.count(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    crossAxisCount: 3,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 1.7,
+                    children: [
+                      for (final value in [
+                        '1',
+                        '2',
+                        '3',
+                        '4',
+                        '5',
+                        '6',
+                        '7',
+                        '8',
+                        '9',
+                      ])
+                        _PinKeyButton(
+                          label: value,
+                          onTap: () => _append(value),
+                        ),
+                      _PinKeyButton(
+                        icon: Icons.fingerprint_rounded,
+                        onTap: widget.biometricEnabled ? _biometric : null,
+                      ),
+                      _PinKeyButton(label: '0', onTap: () => _append('0')),
+                      _PinKeyButton(
+                        icon: Icons.backspace_outlined,
+                        onTap: _backspace,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  TextButton(
+                    onPressed: () {
+                      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'PIN unutgan bo‘lsangiz, xavfsizlik sozlamasini admin orqali tiklang.',
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('PINni unutdingizmi?'),
+                  ),
+                ],
               ),
-            ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PinKeyButton extends StatelessWidget {
+  const _PinKeyButton({this.label, this.icon, required this.onTap});
+
+  final String? label;
+  final IconData? icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFE6DEFF)),
+          ),
+          child: Center(
+            child: icon == null
+                ? Text(
+                    label ?? '',
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  )
+                : Icon(
+                    icon,
+                    color: onTap == null
+                        ? const Color(0xFFCBD5E1)
+                        : AppColors.studentPrimary,
+                    size: 28,
+                  ),
           ),
         ),
       ),
@@ -10753,6 +11085,7 @@ class _ProfileScreen extends StatelessWidget {
     required this.onContactAdmin,
     required this.onCheckForUpdate,
     required this.onSignOut,
+    required this.onSecurityChanged,
     required this.appVersionName,
     required this.notificationCount,
     required this.onNotifications,
@@ -10770,6 +11103,7 @@ class _ProfileScreen extends StatelessWidget {
   final Future<void> Function() onContactAdmin;
   final Future<void> Function() onCheckForUpdate;
   final VoidCallback onSignOut;
+  final Future<void> Function() onSecurityChanged;
   final String appVersionName;
   final int notificationCount;
   final VoidCallback onNotifications;
@@ -10806,7 +11140,11 @@ class _ProfileScreen extends StatelessWidget {
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
-        builder: (context) => _ProfileSecuritySheet(language: language),
+        builder: (context) => _ProfileSecuritySheet(
+          language: language,
+          onSecurityChanged: onSecurityChanged,
+          onSignOut: onSignOut,
+        ),
       );
     }
 
@@ -11182,24 +11520,41 @@ String _profileText(AppLanguage language, String key) {
   };
 }
 
+enum _SecurityPinFlow { create, change, remove }
+
+class _SecurityPinResult {
+  const _SecurityPinResult({this.currentPin = '', this.newPin = ''});
+
+  final String currentPin;
+  final String newPin;
+}
+
 class _ProfileSecuritySheet extends StatefulWidget {
-  const _ProfileSecuritySheet({required this.language});
+  const _ProfileSecuritySheet({
+    required this.language,
+    required this.onSecurityChanged,
+    required this.onSignOut,
+  });
 
   final AppLanguage language;
+  final Future<void> Function() onSecurityChanged;
+  final VoidCallback onSignOut;
 
   @override
   State<_ProfileSecuritySheet> createState() => _ProfileSecuritySheetState();
 }
 
 class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
-  static const _pinKey = 'student_security_pin';
-  static const _biometricKey = 'student_biometric_lock';
+  static const _repository = SupabaseAcademyRepository();
 
-  final _pinController = TextEditingController();
-  bool _pinEnabled = false;
+  bool _hasPin = false;
   bool _biometricEnabled = false;
+  bool _biometricSupported = false;
   bool _loading = true;
   bool _saving = false;
+  bool _signingOut = false;
+  List<Map<String, dynamic>> _devices = const [];
+  List<Map<String, dynamic>> _loginHistory = const [];
 
   String t(String key) => _profileText(widget.language, key);
 
@@ -11209,76 +11564,209 @@ class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
     _load();
   }
 
-  @override
-  void dispose() {
-    _pinController.dispose();
-    super.dispose();
-  }
-
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    final savedPin = prefs.getString(_pinKey) ?? '';
-    setState(() {
-      _pinController.text = savedPin;
-      _pinEnabled = savedPin.isNotEmpty;
-      _biometricEnabled = prefs.getBool(_biometricKey) ?? false;
-      _loading = false;
-    });
-  }
-
-  Future<void> _savePin() async {
-    final pin = _pinController.text.trim();
-    if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(
-          content: Text('PIN 4 ta raqamdan iborat bo‘lishi kerak.'),
-          backgroundColor: AppColors.errorRed,
-        ),
-      );
-      return;
+    try {
+      final results = await Future.wait<Object>([
+        _StudentSecurityStore.readPinHash(),
+        _StudentSecurityStore.isBiometricEnabled(),
+        _StudentBiometricAuth.canCheck(),
+        _repository.loadStudentSecurityAudit(),
+      ]);
+      if (!mounted) return;
+      final audit = results[3] as Map<String, List<Map<String, dynamic>>>;
+      setState(() {
+        _hasPin = (results[0] as String).isNotEmpty;
+        _biometricEnabled = results[1] as bool;
+        _biometricSupported = results[2] as bool;
+        _devices = audit['devices'] ?? const [];
+        _loginHistory = audit['loginHistory'] ?? const [];
+        _loading = false;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() => _loading = false);
     }
-    setState(() => _saving = true);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_pinKey, pin);
-    if (!mounted) return;
-    setState(() {
-      _pinEnabled = true;
-      _saving = false;
-    });
-    ScaffoldMessenger.maybeOf(
-      context,
-    )?.showSnackBar(SnackBar(content: Text(t('pin_saved'))));
   }
 
-  Future<void> _removePin() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_pinKey);
-    await prefs.setBool(_biometricKey, false);
-    if (!mounted) return;
-    setState(() {
-      _pinController.clear();
-      _pinEnabled = false;
-      _biometricEnabled = false;
-    });
+  void _showMessage(String text, {bool error = false}) {
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(content: Text('PIN va biometrik qulf o‘chirildi.')),
+      SnackBar(
+        content: Text(text),
+        backgroundColor: error ? AppColors.errorRed : null,
+      ),
     );
   }
 
-  Future<void> _setBiometric(bool value) async {
-    if (value && !_pinEnabled) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(
-          content: Text('Avval 4 xonali PIN saqlang.'),
-          backgroundColor: AppColors.errorRed,
-        ),
+  Future<bool> _verifyCurrentPin(String pin) async {
+    final lockedUntil = await _StudentSecurityStore.lockedUntil();
+    if (lockedUntil != null) {
+      _showMessage(
+        'PIN 30 daqiqaga bloklangan. Keyinroq urinib ko‘ring.',
+        error: true,
       );
-      return;
+      return false;
     }
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_biometricKey, value);
-    if (mounted) setState(() => _biometricEnabled = value);
+
+    final hash = await _StudentSecurityStore.readPinHash();
+    final ok = hash.isNotEmpty && _StudentSecurityStore.hashPin(pin) == hash;
+    if (ok) {
+      await _StudentSecurityStore.resetFailedAttempts();
+      return true;
+    }
+    await _StudentSecurityStore.registerFailedAttempt();
+    final nextLockedUntil = await _StudentSecurityStore.lockedUntil();
+    _showMessage(
+      nextLockedUntil == null
+          ? 'Joriy PIN noto‘g‘ri.'
+          : 'PIN 5 marta noto‘g‘ri kiritildi. Hisob 30 daqiqaga bloklandi.',
+      error: true,
+    );
+    return false;
+  }
+
+  Future<void> _openPinFlow(_SecurityPinFlow flow) async {
+    if (_saving) return;
+    final result = await showModalBottomSheet<_SecurityPinResult>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _SecurityPinEditorSheet(flow: flow),
+    );
+    if (!mounted || result == null) return;
+
+    setState(() => _saving = true);
+    try {
+      if (flow != _SecurityPinFlow.create &&
+          !await _verifyCurrentPin(result.currentPin)) {
+        return;
+      }
+
+      if (flow == _SecurityPinFlow.remove) {
+        await _StudentSecurityStore.removePin();
+        await _repository.saveStudentSecurityPreferences(
+          pinEnabled: false,
+          biometricEnabled: _biometricEnabled,
+        );
+        if (!mounted) return;
+        setState(() => _hasPin = false);
+        await widget.onSecurityChanged();
+        _showMessage('PIN himoya o‘chirildi.');
+        return;
+      }
+
+      final newPin = result.newPin;
+      if (_StudentSecurityStore.isWeakPin(newPin)) {
+        _showMessage(
+          'Ushbu PIN xavfsiz emas. Boshqa PIN tanlang.',
+          error: true,
+        );
+        return;
+      }
+      if (flow == _SecurityPinFlow.change &&
+          _StudentSecurityStore.hashPin(newPin) ==
+              await _StudentSecurityStore.readPinHash()) {
+        _showMessage('Yangi PIN eskisi bilan bir xil bo‘lmasin.', error: true);
+        return;
+      }
+
+      await _StudentSecurityStore.savePin(newPin);
+      await _repository.saveStudentSecurityPreferences(
+        pinEnabled: true,
+        biometricEnabled: _biometricEnabled,
+      );
+      if (!mounted) return;
+      setState(() => _hasPin = true);
+      await widget.onSecurityChanged();
+      _showMessage(
+        flow == _SecurityPinFlow.create
+            ? 'PIN himoya faollashtirildi.'
+            : 'PIN muvaffaqiyatli o‘zgartirildi.',
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _setBiometric(bool value) async {
+    if (_saving) return;
+    if (value) {
+      if (!_biometricSupported) {
+        _showMessage(
+          'Bu qurilmada biometrik kirish qo‘llab-quvvatlanmaydi.',
+          error: true,
+        );
+        return;
+      }
+      final ok = await _StudentBiometricAuth.authenticate(
+        reason: 'Biometrik kirishni yoqish uchun tasdiqlang',
+      );
+      if (!ok) {
+        _showMessage('Biometrik tasdiqlash bekor qilindi.', error: true);
+        return;
+      }
+    }
+    await _StudentSecurityStore.setBiometricEnabled(value);
+    await _repository.saveStudentSecurityPreferences(
+      pinEnabled: _hasPin,
+      biometricEnabled: value,
+    );
+    if (!mounted) return;
+    setState(() => _biometricEnabled = value);
+    await widget.onSecurityChanged();
+    _showMessage(
+      value
+          ? 'Biometrik kirish faollashtirildi.'
+          : 'Biometrik kirish o‘chirildi.',
+    );
+  }
+
+  Future<void> _signOutEverywhere() async {
+    if (_signingOut) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Barcha qurilmalardan chiqish'),
+        content: const Text(
+          'Hisobingiz boshqa qurilmalarda ham sessiyadan chiqariladi.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Bekor qilish'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Chiqish'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _signingOut = true);
+    try {
+      await _repository.signOutEverywhere();
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      widget.onSignOut();
+    } on Object catch (error) {
+      if (!mounted) return;
+      _showMessage(
+        'Sessiyalar yopilmadi: ${error.toString().replaceFirst('Exception: ', '')}',
+        error: true,
+      );
+      setState(() => _signingOut = false);
+    }
+  }
+
+  String _formatDate(dynamic raw) {
+    if (raw == null) return 'Hozirgina';
+    final value = DateTime.tryParse(raw.toString())?.toLocal();
+    if (value == null) return raw.toString();
+    final day = value.day.toString().padLeft(2, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    return '$day.$month.${value.year}, $hour:$minute';
   }
 
   @override
@@ -11290,94 +11778,796 @@ class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _SecurityHeaderCard(
+                  protected: _hasPin || _biometricEnabled,
+                  hasPin: _hasPin,
+                  biometricEnabled: _biometricEnabled,
+                ),
+                const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
-                      child: _ProfileStatusCard(
+                      child: _SecurityMiniCard(
                         icon: Icons.pin_rounded,
-                        title: 'PIN',
-                        value: _pinEnabled ? 'Yoqilgan' : 'O‘chiq',
-                        color: _pinEnabled
-                            ? const Color(0xFF22C55E)
+                        title: 'PIN himoya',
+                        value: _hasPin ? 'Faol' : 'O‘chiq',
+                        color: _hasPin
+                            ? AppColors.successGreen
                             : AppColors.studentPrimary,
+                        subtitle: _hasPin ? '4 xonali PIN' : 'PIN yarating',
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: _ProfileStatusCard(
+                      child: _SecurityMiniCard(
                         icon: Icons.fingerprint_rounded,
-                        title: 'Biometrik',
+                        title: 'Biometrik kirish',
                         value: _biometricEnabled ? 'Faol' : 'O‘chiq',
                         color: _biometricEnabled
-                            ? const Color(0xFF22C55E)
+                            ? AppColors.successGreen
                             : const Color(0xFFF59E0B),
+                        subtitle: _biometricSupported
+                            ? 'Barmoq izi / Face ID'
+                            : 'Mavjud emas',
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 14),
-                _ProfileSectionPanel(
-                  icon: Icons.password_rounded,
-                  title: t('pin_title'),
-                  subtitle: t('pin_subtitle'),
-                  child: Column(
-                    children: [
-                      TextField(
-                        controller: _pinController,
-                        keyboardType: TextInputType.number,
-                        obscureText: true,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                          LengthLimitingTextInputFormatter(4),
-                        ],
-                        decoration: InputDecoration(
-                          labelText: t('pin_hint'),
-                          prefixIcon: const Icon(Icons.pin_rounded),
-                          suffixIcon: _pinEnabled
-                              ? const Icon(
-                                  Icons.verified_rounded,
-                                  color: Color(0xFF22C55E),
-                                )
-                              : null,
+                const SizedBox(height: 18),
+                const _ProfileSheetTitle('Xavfsizlik sozlamalari'),
+                _SecurityPanel(
+                  children: [
+                    _SecurityActionTile(
+                      icon: _hasPin
+                          ? Icons.edit_note_rounded
+                          : Icons.add_moderator_rounded,
+                      color: AppColors.studentPrimary,
+                      title: _hasPin ? 'PIN o‘zgartirish' : 'PIN yaratish',
+                      subtitle: _hasPin
+                          ? 'Amaldagi PIN kodni yangilang'
+                          : 'Ilovaga kirish uchun 4 xonali PIN qo‘ying',
+                      onTap: () => unawaited(
+                        _openPinFlow(
+                          _hasPin
+                              ? _SecurityPinFlow.change
+                              : _SecurityPinFlow.create,
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      Row(
+                    ),
+                    if (_hasPin)
+                      _SecurityActionTile(
+                        icon: Icons.delete_outline_rounded,
+                        color: AppColors.errorRed,
+                        title: 'PIN o‘chirish',
+                        subtitle: 'PIN himoyani o‘chiradi',
+                        onTap: () =>
+                            unawaited(_openPinFlow(_SecurityPinFlow.remove)),
+                      ),
+                    _SecurityActionTile(
+                      icon: Icons.verified_user_outlined,
+                      color: AppColors.studentPrimary,
+                      title: 'Biometrik kirish',
+                      subtitle: 'Barmoq izi / Face ID orqali kirish',
+                      trailing: Switch.adaptive(
+                        value: _biometricEnabled,
+                        onChanged: _setBiometric,
+                        activeThumbColor: AppColors.studentPrimary,
+                        activeTrackColor: AppColors.studentPrimary.withValues(
+                          alpha: .34,
+                        ),
+                      ),
+                    ),
+                    _SecurityActionTile(
+                      icon: Icons.devices_other_rounded,
+                      color: AppColors.studentPrimary,
+                      title: 'Faol qurilmalar',
+                      subtitle: 'Hisobingizga ulangan qurilmalar',
+                      trailing: _SecurityCountPill('${_devices.length} ta'),
+                    ),
+                    _SecurityActionTile(
+                      icon: Icons.logout_rounded,
+                      color: AppColors.errorRed,
+                      title: 'Barcha qurilmalardan chiqish',
+                      subtitle: 'Barcha sessiyalarni yakunlash',
+                      loading: _signingOut,
+                      onTap: _signOutEverywhere,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _SecurityAuditCard(
+                  title: 'Faol qurilmalar',
+                  emptyText: 'Faol qurilmalar ro‘yxati hali yo‘q.',
+                  rows: _devices.take(3).map((row) {
+                    final title =
+                        (row['device_name'] ?? row['browser'] ?? 'Faol qurilma')
+                            .toString();
+                    final subtitle =
+                        '${row['location'] ?? row['ip_address'] ?? 'Joylashuv noma’lum'} • ${_formatDate(row['last_seen_at'] ?? row['created_at'])}';
+                    return _SecurityAuditRow(
+                      icon: Icons.smartphone_rounded,
+                      title: title,
+                      subtitle: subtitle,
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+                _SecurityAuditCard(
+                  title: 'Oxirgi kirish',
+                  emptyText: 'Kirish tarixi hali yo‘q.',
+                  rows: _loginHistory.take(3).map((row) {
+                    final success = row['success'] != false;
+                    final subtitle =
+                        '${row['location'] ?? row['ip_address'] ?? 'Joylashuv noma’lum'} • ${_formatDate(row['created_at'])}';
+                    return _SecurityAuditRow(
+                      icon: success
+                          ? Icons.check_circle_rounded
+                          : Icons.error_rounded,
+                      title: success
+                          ? 'Muvaffaqiyatli kirish'
+                          : 'Rad etilgan kirish',
+                      subtitle: subtitle,
+                      color: success
+                          ? AppColors.successGreen
+                          : AppColors.errorRed,
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+                const _SecurityInfoCard(
+                  icon: Icons.shield_outlined,
+                  title: 'Xavfsizlik haqida',
+                  text:
+                      'PIN 5 marta noto‘g‘ri kiritilsa, himoya 30 daqiqaga bloklanadi. PIN serverga yuborilmaydi va faqat ushbu qurilmada shifrlangan holatda saqlanadi.',
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _SecurityHeaderCard extends StatelessWidget {
+  const _SecurityHeaderCard({
+    required this.protected,
+    required this.hasPin,
+    required this.biometricEnabled,
+  });
+
+  final bool protected;
+  final bool hasPin;
+  final bool biometricEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: protected
+              ? const [Color(0xFFF7F1FF), Color(0xFFFFFFFF)]
+              : const [Color(0xFFFFF7ED), Color(0xFFFFFFFF)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: protected ? const Color(0xFFE0D4FF) : const Color(0xFFFED7AA),
+        ),
+      ),
+      child: Row(
+        children: [
+          IconBadge(
+            icon: protected ? Icons.shield_rounded : Icons.shield_outlined,
+            color: protected
+                ? AppColors.studentPrimary
+                : const Color(0xFFF59E0B),
+            size: 58,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  protected
+                      ? 'Hisobingiz himoyalangan'
+                      : 'Hisobingiz himoyalanmagan',
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  protected
+                      ? '${[if (hasPin) 'PIN', if (biometricEnabled) 'biometrik himoya'].join(' va ')} yoqilgan'
+                      : 'Xavfsizlikni oshirish uchun PIN yoki biometrik himoyani yoqing',
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    height: 1.3,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityMiniCard extends StatelessWidget {
+  const _SecurityMiniCard({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.color,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String value;
+  final Color color;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.withValues(alpha: .22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 26),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontWeight: FontWeight.w900,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              value,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityPanel extends StatelessWidget {
+  const _SecurityPanel({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: [
+          for (var index = 0; index < children.length; index++) ...[
+            children[index],
+            if (index != children.length - 1)
+              const Divider(height: 1, indent: 74, color: Color(0xFFE2E8F0)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityActionTile extends StatelessWidget {
+  const _SecurityActionTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+    this.onTap,
+    this.loading = false,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final tile = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      child: Row(
+        children: [
+          IconBadge(icon: icon, color: color, size: 46),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          if (loading)
+            const SizedBox.square(
+              dimension: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            )
+          else
+            trailing ??
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: const Color(0xFF64748B).withValues(alpha: .95),
+                  size: 30,
+                ),
+        ],
+      ),
+    );
+    if (onTap == null) return tile;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(onTap: loading ? null : onTap, child: tile),
+    );
+  }
+}
+
+class _SecurityCountPill extends StatelessWidget {
+  const _SecurityCountPill(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppColors.studentPrimary.withValues(alpha: .10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: AppColors.studentPrimary,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _SecurityAuditRow {
+  const _SecurityAuditRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.color = AppColors.studentPrimary,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+}
+
+class _SecurityAuditCard extends StatelessWidget {
+  const _SecurityAuditCard({
+    required this.title,
+    required this.rows,
+    required this.emptyText,
+  });
+
+  final String title;
+  final List<_SecurityAuditRow> rows;
+  final String emptyText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (rows.isEmpty)
+            Text(
+              emptyText,
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          else
+            for (final row in rows)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  children: [
+                    IconBadge(icon: row.icon, color: row.color, size: 42),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _saving ? null : _savePin,
-                              icon: Icon(
-                                _saving
-                                    ? Icons.hourglass_top_rounded
-                                    : Icons.lock_rounded,
-                              ),
-                              label: Text(t('pin_save')),
+                          Text(
+                            row.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF0F172A),
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
-                          if (_pinEnabled) ...[
-                            const SizedBox(width: 10),
-                            IconButton.filledTonal(
-                              tooltip: 'PINni o‘chirish',
-                              onPressed: _removePin,
-                              icon: const Icon(Icons.delete_outline_rounded),
+                          const SizedBox(height: 2),
+                          Text(
+                            row.subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 13,
+                              height: 1.25,
+                              fontWeight: FontWeight.w700,
                             ),
-                          ],
+                          ),
                         ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityInfoCard extends StatelessWidget {
+  const _SecurityInfoCard({
+    required this.icon,
+    required this.title,
+    required this.text,
+  });
+
+  final IconData icon;
+  final String title;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          IconBadge(icon: icon, color: const Color(0xFFF59E0B), size: 46),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  text,
+                  style: const TextStyle(
+                    color: Color(0xFF475569),
+                    height: 1.35,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SecurityPinEditorSheet extends StatefulWidget {
+  const _SecurityPinEditorSheet({required this.flow});
+
+  final _SecurityPinFlow flow;
+
+  @override
+  State<_SecurityPinEditorSheet> createState() =>
+      _SecurityPinEditorSheetState();
+}
+
+class _SecurityPinEditorSheetState extends State<_SecurityPinEditorSheet> {
+  final _currentController = TextEditingController();
+  final _newController = TextEditingController();
+  final _confirmController = TextEditingController();
+  bool _obscure = true;
+
+  bool get _needsCurrent => widget.flow != _SecurityPinFlow.create;
+  bool get _needsNew => widget.flow != _SecurityPinFlow.remove;
+
+  @override
+  void dispose() {
+    _currentController.dispose();
+    _newController.dispose();
+    _confirmController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final current = _currentController.text.trim();
+    final next = _newController.text.trim();
+    final confirm = _confirmController.text.trim();
+    if (_needsCurrent && !RegExp(r'^\d{4}$').hasMatch(current)) {
+      _snack('Joriy PIN 4 ta raqam bo‘lishi kerak.');
+      return;
+    }
+    if (_needsNew) {
+      if (!RegExp(r'^\d{4}$').hasMatch(next)) {
+        _snack('Yangi PIN 4 ta raqam bo‘lishi kerak.');
+        return;
+      }
+      if (next != confirm) {
+        _snack('Yangi PIN tasdiqlash bilan mos emas.');
+        return;
+      }
+    }
+    Navigator.of(
+      context,
+    ).pop(_SecurityPinResult(currentPin: current, newPin: next));
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: AppColors.errorRed),
+    );
+  }
+
+  String get _title {
+    return switch (widget.flow) {
+      _SecurityPinFlow.create => 'PIN yaratish',
+      _SecurityPinFlow.change => 'PIN o‘zgartirish',
+      _SecurityPinFlow.remove => 'PIN o‘chirish',
+    };
+  }
+
+  String get _subtitle {
+    return switch (widget.flow) {
+      _SecurityPinFlow.create => 'Ilovaga kirish uchun 4 xonali kod tanlang',
+      _SecurityPinFlow.change =>
+        'Amaldagi PIN kodni kiriting va yangisini tanlang',
+      _SecurityPinFlow.remove =>
+        'PIN himoyani o‘chirish uchun joriy PINni kiriting',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 8, 20, bottomInset + 20),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IconBadge(
+                    icon: Icons.lock_rounded,
+                    color: AppColors.studentPrimary,
+                    size: 54,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _title,
+                          style: const TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _subtitle,
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            height: 1.25,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              if (_needsCurrent) ...[
+                _pinField(_currentController, 'Joriy PIN'),
+                const SizedBox(height: 12),
+              ],
+              if (_needsNew) ...[
+                _pinField(_newController, 'Yangi PIN'),
+                const SizedBox(height: 12),
+                _pinField(_confirmController, 'Yangi PINni tasdiqlang'),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(13),
+                  decoration: BoxDecoration(
+                    color: AppColors.studentPrimary.withValues(alpha: .08),
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(
+                      color: AppColors.studentPrimary.withValues(alpha: .16),
+                    ),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.shield_outlined,
+                        color: AppColors.studentPrimary,
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Eslab qoladigan, lekin oddiy bo‘lmagan kod tanlang',
+                          style: TextStyle(
+                            color: Color(0xFF334155),
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
-                _ProfileToggleRow(
-                  icon: Icons.fingerprint_rounded,
-                  title: t('biometric_title'),
-                  subtitle: t('biometric_subtitle'),
-                  value: _biometricEnabled,
-                  onChanged: _setBiometric,
-                ),
+                const SizedBox(height: 16),
               ],
-            ),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _submit,
+                  icon: Icon(
+                    widget.flow == _SecurityPinFlow.remove
+                        ? Icons.delete_outline_rounded
+                        : Icons.lock_rounded,
+                  ),
+                  label: Text(
+                    widget.flow == _SecurityPinFlow.remove
+                        ? 'PINni o‘chirish'
+                        : 'Saqlash',
+                  ),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pinField(TextEditingController controller, String label) {
+    return TextField(
+      controller: controller,
+      autofocus: controller == _currentController || !_needsCurrent,
+      keyboardType: TextInputType.number,
+      obscureText: _obscure,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(4),
+      ],
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: const Icon(Icons.pin_rounded),
+        suffixIcon: IconButton(
+          onPressed: () => setState(() => _obscure = !_obscure),
+          icon: Icon(
+            _obscure
+                ? Icons.visibility_outlined
+                : Icons.visibility_off_outlined,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -11401,6 +12591,9 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
   static const _repository = SupabaseAcademyRepository();
   Map<String, List<Map<String, dynamic>>>? _billing;
   Object? _error;
+  String? _selectedPlanId;
+  String? _selectedPaymentMethodId;
+  bool _purchasing = false;
 
   String t(String key) => _profileText(widget.language, key);
 
@@ -11417,19 +12610,30 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
     });
     try {
       final data = await _repository.loadStudentBilling();
-      if (mounted) setState(() => _billing = data);
+      if (mounted) {
+        setState(() {
+          _billing = data;
+          final plans = data['plans'] ?? const <Map<String, dynamic>>[];
+          final methods =
+              data['paymentMethods'] ?? const <Map<String, dynamic>>[];
+          if (_selectedPlanId == null && plans.isNotEmpty) {
+            _selectedPlanId = plans.first['id']?.toString();
+          }
+          if (_selectedPaymentMethodId == null && methods.isNotEmpty) {
+            _selectedPaymentMethodId = methods.first['id']?.toString();
+          }
+        });
+      }
     } on Object catch (error) {
       if (mounted) setState(() => _error = error);
     }
   }
 
-  Future<void> _openSupport() async {
-    Navigator.of(context).pop();
-    await widget.onContactAdmin();
-  }
-
   String _subscriptionTitle(Map<String, dynamic> row) {
     final plan = row['subscription_plans'];
+    if (plan is Map && (plan['name'] ?? '').toString().trim().isNotEmpty) {
+      return plan['name'].toString();
+    }
     if (plan is Map && (plan['title'] ?? '').toString().trim().isNotEmpty) {
       return plan['title'].toString();
     }
@@ -11441,6 +12645,55 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
     final currency = (row['currency'] ?? 'UZS').toString();
     if (amount == null) return '';
     return '$amount $currency';
+  }
+
+  String _formatMoney(num value) {
+    final rounded = value.round().toString();
+    final buffer = StringBuffer();
+    for (var index = 0; index < rounded.length; index++) {
+      final left = rounded.length - index;
+      buffer.write(rounded[index]);
+      if (left > 1 && left % 3 == 1) buffer.write(' ');
+    }
+    return '${buffer.toString()} so‘m';
+  }
+
+  num _planPrice(Map<String, dynamic> row) {
+    final value = row['price'];
+    if (value is num) return value;
+    return num.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  String _planDisplayName(Map<String, dynamic> row) {
+    final duration = (row['duration_days'] as num?)?.round();
+    if (duration != null) {
+      if (duration >= 360) return '12 oy';
+      if (duration % 30 == 0) return '${duration ~/ 30} oy';
+      return '$duration kun';
+    }
+    final name = (row['name'] ?? row['title'] ?? '').toString().trim();
+    return name.isEmpty ? 'Premium' : name;
+  }
+
+  String _fullPlanName(Map<String, dynamic> row) {
+    final name = (row['name'] ?? row['title'] ?? '').toString().trim();
+    return name.isEmpty ? _planDisplayName(row) : name;
+  }
+
+  List<String> _planFeatures(Map<String, dynamic> row) {
+    final features = row['features'];
+    if (features is List) {
+      return features
+          .map((value) => value.toString().trim())
+          .where((value) => value.isNotEmpty)
+          .toList();
+    }
+    return const [
+      'Barcha kurslar',
+      'Sertifikat',
+      'Progress kuzatish',
+      'Reklamasiz',
+    ];
   }
 
   DateTime? _dateValue(Map<String, dynamic> row, List<String> keys) {
@@ -11471,63 +12724,85 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
     List<Map<String, dynamic>> subscriptions,
   ) {
     for (final row in subscriptions) {
-      if ((row['status'] ?? '').toString().toLowerCase() == 'active') {
+      final endDate = _dateValue(row, ['current_period_end', 'ends_at']);
+      final hasNotExpired = endDate == null || endDate.isAfter(DateTime.now());
+      if ((row['status'] ?? '').toString().toLowerCase() == 'active' &&
+          hasNotExpired) {
         return row;
       }
     }
-    return subscriptions.isEmpty ? null : subscriptions.first;
+    return null;
   }
 
-  List<_BillingPlanData> _planCards(
-    List<Map<String, dynamic>> plans,
-    List<AcademyModule> paidModules,
-  ) {
-    if (plans.isNotEmpty) {
-      return plans.take(6).map((plan) {
-        final months = (plan['duration_months'] as num?)?.round() ?? 1;
-        final title = months <= 1 ? '1 oy' : '$months oy';
-        final price = (plan['price_label'] ?? '').toString().trim();
-        final perMonth = months > 1 && price.isNotEmpty
-            ? '$price / $months oy'
-            : '/ oy';
-        return _BillingPlanData(
-          title: title,
-          price: price.isEmpty ? 'Admin tarif' : price,
-          perMonth: perMonth,
-          discount: months >= 12
-              ? '30% chegirma'
-              : months >= 3
-              ? '10% chegirma'
-              : '',
-        );
-      }).toList();
-    }
+  List<_BillingPlanData> _planCards(List<Map<String, dynamic>> plans) {
+    return plans.map((plan) {
+      final price = _planPrice(plan);
+      final discount = (plan['discount_percent'] as num?)?.round() ?? 0;
+      return _BillingPlanData(
+        id: plan['id'].toString(),
+        title: _planDisplayName(plan),
+        fullTitle: _fullPlanName(plan),
+        price: _formatMoney(price),
+        amount: price,
+        perMonth: '/ oy',
+        discount: discount > 0 ? '$discount% chegirma' : '',
+        isPopular: plan['is_popular'] == true,
+        features: _planFeatures(plan),
+      );
+    }).toList();
+  }
 
-    final fallbackPrice = paidModules
-        .map((module) => module.subscriptionPriceLabel.trim())
-        .firstWhere((value) => value.isNotEmpty, orElse: () => 'Admin tarif');
-    return [
-      _BillingPlanData(title: '1 oy', price: fallbackPrice, perMonth: '/ oy'),
-      _BillingPlanData(
-        title: '3 oy',
-        price: fallbackPrice == 'Admin tarif' ? 'Admin tarif' : fallbackPrice,
-        perMonth: '/ 3 oy',
-        discount: '10% chegirma',
-      ),
-      _BillingPlanData(
-        title: '12 oy',
-        price: fallbackPrice == 'Admin tarif' ? 'Admin tarif' : fallbackPrice,
-        perMonth: '/ yil',
-        discount: '30% chegirma',
-      ),
-    ];
+  Map<String, dynamic>? _selectedPlanRow(List<Map<String, dynamic>> plans) {
+    for (final plan in plans) {
+      if (plan['id']?.toString() == _selectedPlanId) return plan;
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _selectedPaymentMethodRow(
+    List<Map<String, dynamic>> methods,
+  ) {
+    for (final method in methods) {
+      if (method['id']?.toString() == _selectedPaymentMethodId) return method;
+    }
+    return null;
+  }
+
+  Future<void> _purchase() async {
+    final planId = _selectedPlanId;
+    final methodId = _selectedPaymentMethodId;
+    if (planId == null || methodId == null || _purchasing) return;
+    setState(() => _purchasing = true);
+    try {
+      await _repository.purchaseSubscription(
+        planId: planId,
+        paymentMethodId: methodId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'To‘lov so‘rovi yaratildi. Tasdiqlangandan keyin obuna faollashadi.',
+          ),
+        ),
+      );
+      await _load();
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'To‘lov boshlanmadi: ${error.toString().replaceFirst('Exception: ', '')}',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _purchasing = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final paidModules = widget.data.modules
-        .where((module) => module.requiresSubscription)
-        .toList();
     final billing = _billing;
     final error = _error;
     final subscriptions = <Map<String, dynamic>>[
@@ -11537,8 +12812,15 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
     final transactions =
         billing?['transactions'] ?? const <Map<String, dynamic>>[];
     final plans = billing?['plans'] ?? const <Map<String, dynamic>>[];
+    final paymentMethods =
+        billing?['paymentMethods'] ?? const <Map<String, dynamic>>[];
     final activeSubscription = _activeSubscription(subscriptions);
-    final planCards = _planCards(plans, paidModules);
+    final planCards = _planCards(plans);
+    final selectedPlan = _selectedPlanRow(plans);
+    final selectedMethod = _selectedPaymentMethodRow(paymentMethods);
+    final selectedPrice = selectedPlan == null ? 0 : _planPrice(selectedPlan);
+    final canPay =
+        selectedPlan != null && selectedMethod != null && !_purchasing;
     return _ProfileBillingScaffold(
       child: error != null
           ? _ProfileErrorState(
@@ -11575,10 +12857,9 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
                       ['current_period_end', 'ends_at'],
                     ),
                   ),
-                  onAction: () => unawaited(_openSupport()),
                 ),
                 const SizedBox(height: 22),
-                const _BillingSectionHeader(title: 'Mavjud tariflar'),
+                const _BillingSectionHeader(title: 'Tariflarni tanlang'),
                 const SizedBox(height: 10),
                 if (planCards.isEmpty)
                   _ProfileEmptyPanel(
@@ -11588,36 +12869,81 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
                         'Tariflar admin paneldagi to‘lov sozlamasidan keladi.',
                   )
                 else
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    child: Row(
+                  Column(
+                    children: [
+                      for (var index = 0; index < planCards.length; index++)
+                        Padding(
+                          padding: EdgeInsets.only(
+                            bottom: index == planCards.length - 1 ? 0 : 12,
+                          ),
+                          child: _BillingPlanCard(
+                            data: planCards[index],
+                            selected: planCards[index].id == _selectedPlanId,
+                            onTap: () => setState(
+                              () => _selectedPlanId = planCards[index].id,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                const SizedBox(height: 14),
+                const _BillingInfoBanner(),
+                if (selectedPlan != null) ...[
+                  const SizedBox(height: 22),
+                  const _BillingSectionHeader(title: 'To‘lov usulini tanlang'),
+                  const SizedBox(height: 10),
+                  if (paymentMethods.isEmpty)
+                    const _ProfileEmptyPanel(
+                      icon: Icons.account_balance_wallet_rounded,
+                      title: 'To‘lov usullari hali yoqilmagan',
+                      subtitle:
+                          'Admin paneldan Click, Payme, Uzum yoki karta usullarini faollashtiring.',
+                    )
+                  else
+                    Column(
                       children: [
-                        for (var index = 0; index < planCards.length; index++)
+                        for (
+                          var index = 0;
+                          index < paymentMethods.length;
+                          index++
+                        )
                           Padding(
                             padding: EdgeInsets.only(
-                              right: index == planCards.length - 1 ? 0 : 10,
+                              bottom: index == paymentMethods.length - 1
+                                  ? 0
+                                  : 10,
                             ),
-                            child: _BillingPlanCard(
-                              data: planCards[index],
-                              selected: index == 0,
-                              onTap: () => unawaited(_openSupport()),
+                            child: _BillingPaymentMethodCard(
+                              row: paymentMethods[index],
+                              selected:
+                                  paymentMethods[index]['id']?.toString() ==
+                                  _selectedPaymentMethodId,
+                              onTap: () => setState(
+                                () => _selectedPaymentMethodId =
+                                    paymentMethods[index]['id']?.toString(),
+                              ),
                             ),
                           ),
                       ],
                     ),
+                  const SizedBox(height: 18),
+                  _BillingPaymentDetails(
+                    planName: _fullPlanName(selectedPlan),
+                    price: _formatMoney(selectedPrice),
+                    methodName: selectedMethod == null
+                        ? 'Tanlanmagan'
+                        : selectedMethod['name'].toString(),
                   ),
-                const SizedBox(height: 14),
-                const _BillingInfoBanner(),
+                ],
                 const SizedBox(height: 22),
                 _BillingSectionHeader(title: t('payment_history')),
                 const SizedBox(height: 10),
                 if (transactions.isEmpty)
                   _ProfileEmptyPanel(
                     icon: Icons.receipt_long_outlined,
-                    title: t('no_payments'),
+                    title: 'Siz hali hech qanday to‘lov amalga oshirmagansiz.',
                     subtitle:
-                        'To‘lov amalga oshirilsa, holati va sanasi shu yerda chiqadi.',
+                        'To‘lovlar tasdiqlanganda tarix shu yerda chiqadi.',
                   )
                 else
                   _BillingHistoryList(
@@ -11631,12 +12957,20 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
                 SizedBox(
                   width: double.infinity,
                   child: _BillingGradientButton(
-                    onPressed: () => unawaited(_openSupport()),
-                    icon: const Icon(Icons.diamond_outlined),
+                    onPressed: canPay ? () => unawaited(_purchase()) : null,
+                    icon: Icon(
+                      _purchasing
+                          ? Icons.hourglass_top_rounded
+                          : Icons.lock_rounded,
+                    ),
                     label: Text(
-                      activeSubscription == null
-                          ? 'Premium obuna olish'
-                          : 'Obunani uzaytirish',
+                      selectedPlan == null
+                          ? 'Tarif tanlang'
+                          : selectedMethod == null
+                          ? 'To‘lov usulini tanlang'
+                          : _purchasing
+                          ? 'To‘lov boshlanmoqda...'
+                          : 'To‘lash (${_formatMoney(selectedPrice)})',
                     ),
                   ),
                 ),
@@ -11850,7 +13184,6 @@ class _BillingSubscriptionHero extends StatelessWidget {
     required this.startDate,
     required this.endDate,
     required this.daysLeft,
-    required this.onAction,
   });
 
   final String title;
@@ -11858,7 +13191,6 @@ class _BillingSubscriptionHero extends StatelessWidget {
   final DateTime? startDate;
   final DateTime? endDate;
   final int? daysLeft;
-  final VoidCallback onAction;
 
   static String _date(DateTime? value) {
     if (value == null) return '--.--.----';
@@ -12022,14 +13354,6 @@ class _BillingSubscriptionHero extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          _BillingGradientButton(
-            onPressed: onAction,
-            icon: Icon(isActive ? Icons.sync_rounded : Icons.diamond_outlined),
-            label: Text(
-              isActive ? 'Obunani uzaytirish' : 'Premium obuna olish',
-            ),
-          ),
         ],
       ),
     );
@@ -12135,9 +13459,10 @@ class _BillingDateTile extends StatelessWidget {
 }
 
 class _BillingSectionHeader extends StatelessWidget {
-  const _BillingSectionHeader({required this.title});
+  const _BillingSectionHeader({required this.title, this.showAll = false});
 
   final String title;
+  final bool showAll;
 
   @override
   Widget build(BuildContext context) {
@@ -12153,17 +13478,18 @@ class _BillingSectionHeader extends StatelessWidget {
             ),
           ),
         ),
-        TextButton(
-          onPressed: () {},
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Barchasi'),
-              SizedBox(width: 2),
-              Icon(Icons.chevron_right_rounded, size: 18),
-            ],
+        if (showAll)
+          TextButton(
+            onPressed: () {},
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Barchasi'),
+                SizedBox(width: 2),
+                Icon(Icons.chevron_right_rounded, size: 18),
+              ],
+            ),
           ),
-        ),
       ],
     );
   }
@@ -12171,16 +13497,26 @@ class _BillingSectionHeader extends StatelessWidget {
 
 class _BillingPlanData {
   const _BillingPlanData({
+    required this.id,
     required this.title,
+    required this.fullTitle,
     required this.price,
+    required this.amount,
     required this.perMonth,
+    required this.features,
     this.discount = '',
+    this.isPopular = false,
   });
 
+  final String id;
   final String title;
+  final String fullTitle;
   final String price;
+  final num amount;
   final String perMonth;
+  final List<String> features;
   final String discount;
+  final bool isPopular;
 }
 
 class _BillingPlanCard extends StatelessWidget {
@@ -12200,127 +13536,171 @@ class _BillingPlanCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
       child: Container(
-        width: 136,
-        padding: const EdgeInsets.all(14),
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
+          color: selected ? const Color(0xFFFBFAFF) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: selected
                 ? AppColors.studentPrimary
                 : const Color(0xFFE2E8F0),
-            width: selected ? 1.6 : 1,
+            width: selected ? 1.8 : 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: AppColors.navy.withValues(alpha: .04),
-              blurRadius: 16,
+              color: AppColors.navy.withValues(alpha: selected ? .08 : .04),
+              blurRadius: selected ? 22 : 14,
               offset: const Offset(0, 10),
             ),
           ],
         ),
-        child: Stack(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (selected)
-              const Positioned(
-                right: 0,
-                top: 0,
-                child: CircleAvatar(
-                  radius: 13,
-                  backgroundColor: AppColors.studentPrimary,
-                  child: Icon(
-                    Icons.check_rounded,
-                    color: Colors.white,
-                    size: 17,
-                  ),
-                ),
+            CircleAvatar(
+              radius: 17,
+              backgroundColor: selected
+                  ? AppColors.studentPrimary
+                  : const Color(0xFFF1F5F9),
+              child: Icon(
+                selected ? Icons.check_rounded : Icons.circle_outlined,
+                color: selected ? Colors.white : const Color(0xFF94A3B8),
+                size: selected ? 22 : 20,
               ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data.title,
-                  style: const TextStyle(
-                    color: Color(0xFF334155),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  data.price,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 19,
-                    height: 1.08,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  data.perMonth,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
-                  ),
-                ),
-                if (data.discount.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.studentPrimary.withValues(alpha: .1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      data.discount,
-                      style: const TextStyle(
-                        color: AppColors.studentPrimary,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                for (final feature in const [
-                  'Barcha kurslar',
-                  'Sertifikat',
-                  'Progress kuzatuv',
-                  'Reklamasiz',
-                ])
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.check_rounded,
-                          color: AppColors.studentPrimary,
-                          size: 16,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        data.title,
+                        style: const TextStyle(
+                          color: Color(0xFF0F172A),
+                          fontSize: 21,
+                          fontWeight: FontWeight.w900,
                         ),
-                        const SizedBox(width: 7),
-                        Expanded(
-                          child: Text(
-                            feature,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFF475569),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
+                      ),
+                      if (data.isPopular)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.studentPrimary.withValues(
+                              alpha: .1,
                             ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.star_rounded,
+                                color: AppColors.studentPrimary,
+                                size: 15,
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                'Eng ommabop',
+                                style: TextStyle(
+                                  color: AppColors.studentPrimary,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    data.price,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.studentPrimary,
+                      fontSize: 22,
+                      height: 1.08,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    data.perMonth,
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (data.discount.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.studentPrimary.withValues(alpha: .1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        data.discount,
+                        style: const TextStyle(
+                          color: AppColors.studentPrimary,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Container(width: 1, height: 106, color: const Color(0xFFE2E8F0)),
+            const SizedBox(width: 14),
+            SizedBox(
+              width: 128,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final feature in data.features.take(5))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.check_rounded,
+                            color: AppColors.studentPrimary,
+                            size: 16,
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              feature,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF475569),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
             ),
           ],
         ),
@@ -12380,6 +13760,180 @@ class _BillingInfoBanner extends StatelessWidget {
   }
 }
 
+class _BillingPaymentMethodCard extends StatelessWidget {
+  const _BillingPaymentMethodCard({
+    required this.row,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final Map<String, dynamic> row;
+  final bool selected;
+  final VoidCallback onTap;
+
+  IconData get _icon {
+    final code = (row['code'] ?? '').toString().toLowerCase();
+    if (code.contains('click')) return Icons.touch_app_rounded;
+    if (code.contains('payme')) return Icons.payments_rounded;
+    if (code.contains('uzum')) return Icons.account_balance_rounded;
+    return Icons.credit_card_rounded;
+  }
+
+  Color get _color {
+    final code = (row['code'] ?? '').toString().toLowerCase();
+    if (code.contains('payme')) return const Color(0xFF16B8C7);
+    if (code.contains('uzum')) return const Color(0xFF5B21F3);
+    if (code.contains('card')) return const Color(0xFF2563EB);
+    return AppColors.studentPrimary;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (row['name'] ?? 'To‘lov usuli').toString();
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected
+                ? AppColors.studentPrimary
+                : const Color(0xFFE2E8F0),
+            width: selected ? 1.8 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              color: selected
+                  ? AppColors.studentPrimary
+                  : const Color(0xFF94A3B8),
+            ),
+            const SizedBox(width: 12),
+            IconBadge(icon: _icon, color: _color, size: 42),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            Text(
+              (row['code'] ?? '').toString().replaceAll('_', ' ').toUpperCase(),
+              style: TextStyle(
+                color: _color,
+                fontWeight: FontWeight.w900,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BillingPaymentDetails extends StatelessWidget {
+  const _BillingPaymentDetails({
+    required this.planName,
+    required this.price,
+    required this.methodName,
+  });
+
+  final String planName;
+  final String price;
+  final String methodName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBFCFF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'To‘lov tafsilotlari',
+            style: TextStyle(
+              color: Color(0xFF0F172A),
+              fontWeight: FontWeight.w900,
+              fontSize: 17,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _BillingDetailRow(label: 'Tarif:', value: planName),
+          _BillingDetailRow(label: 'Narxi:', value: price),
+          _BillingDetailRow(label: 'To‘lov usuli:', value: methodName),
+          const Divider(height: 24, color: Color(0xFFE2E8F0)),
+          _BillingDetailRow(label: 'Jami:', value: price, highlight: true),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingDetailRow extends StatelessWidget {
+  const _BillingDetailRow({
+    required this.label,
+    required this.value,
+    this.highlight = false,
+  });
+
+  final String label;
+  final String value;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: highlight
+                    ? AppColors.studentPrimary
+                    : const Color(0xFF0F172A),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _BillingHistoryList extends StatelessWidget {
   const _BillingHistoryList({
     required this.rows,
@@ -12430,6 +13984,14 @@ class _BillingHistoryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = (row['status'] ?? 'paid').toString();
+    final plan = row['subscription_plans'];
+    final method = row['payment_methods'];
+    final planName = plan is Map
+        ? (plan['name'] ?? plan['title'] ?? 'Premium').toString()
+        : 'Premium';
+    final methodName = method is Map
+        ? (method['name'] ?? row['provider'] ?? '').toString()
+        : (row['provider'] ?? '').toString();
     final isPaid =
         status.toLowerCase().contains('paid') ||
         status.toLowerCase().contains('success') ||
@@ -12453,7 +14015,7 @@ class _BillingHistoryRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  date,
+                  planName,
                   style: const TextStyle(
                     color: Color(0xFF0F172A),
                     fontWeight: FontWeight.w900,
@@ -12461,7 +14023,10 @@ class _BillingHistoryRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  (row['provider'] ?? 'Premium Student').toString(),
+                  [
+                    methodName,
+                    date,
+                  ].where((value) => value.isNotEmpty).join(' • '),
                   style: const TextStyle(
                     color: Color(0xFF64748B),
                     fontWeight: FontWeight.w700,
@@ -12508,7 +14073,7 @@ class _BillingGradientButton extends StatelessWidget {
     required this.label,
   });
 
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final Widget icon;
   final Widget label;
 
@@ -12524,9 +14089,13 @@ class _BillingGradientButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(15),
-            gradient: const LinearGradient(
-              colors: [Color(0xFF6D4AFF), Color(0xFF5738E8)],
-            ),
+            gradient: onPressed == null
+                ? const LinearGradient(
+                    colors: [Color(0xFFCBD5E1), Color(0xFF94A3B8)],
+                  )
+                : const LinearGradient(
+                    colors: [Color(0xFF6D4AFF), Color(0xFF5738E8)],
+                  ),
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF6D4AFF).withValues(alpha: .22),
