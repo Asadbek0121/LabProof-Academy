@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'package:audioplayers/audioplayers.dart' as audio;
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -15947,6 +15948,31 @@ Future<void> _openChatAttachment(String url) async {
   await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
+String _fileSizeLabel(int? bytes) {
+  if (bytes == null || bytes <= 0) return '';
+  if (bytes >= 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+  if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  return '$bytes B';
+}
+
+String _supportStatusText(AdminInboxMessage message) {
+  if ((message.adminReply ?? '').trim().isNotEmpty) return 'Javob berildi';
+  if (message.adminReadAt != null || message.isRead)
+    return 'Ko‘rib chiqilmoqda';
+  return 'Jarayonda';
+}
+
+Color _supportStatusColor(AdminInboxMessage message) {
+  if ((message.adminReply ?? '').trim().isNotEmpty) {
+    return AppColors.successGreen;
+  }
+  if (message.adminReadAt != null || message.isRead)
+    return AppColors.primaryBlue;
+  return AppColors.studentPrimary;
+}
+
 class _AdminSupportSheet extends StatefulWidget {
   const _AdminSupportSheet({required this.language});
 
@@ -15978,7 +16004,7 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
   Timer? _voiceTimer;
   bool _sending = false;
   bool _historyLoading = true;
-  bool _showAttachmentTray = false;
+  bool _chatOpen = false;
   bool _recordingVoice = false;
   int _voiceSeconds = 0;
   String _voiceExtension = 'wav';
@@ -15999,6 +16025,83 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
     }
   }
 
+  void _openSupportChat() {
+    if (_chatOpen) return;
+    setState(() => _chatOpen = true);
+  }
+
+  void _openSupportHome() {
+    if (!_chatOpen) {
+      Navigator.of(context).pop(false);
+      return;
+    }
+    setState(() => _chatOpen = false);
+  }
+
+  Future<void> _showAttachmentPickerSheet() async {
+    if (_sending) return;
+    final theme = Theme.of(context);
+    final kind = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: theme.colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final actions = [
+          ('image', Icons.image_outlined, 'Rasm', 'Galereyadan rasm tanlash'),
+          ('video', Icons.videocam_outlined, 'Video', 'Video fayl biriktirish'),
+          (
+            'video_note',
+            Icons.radio_button_checked_rounded,
+            'Dumaloq video',
+            'Kamera orqali qisqa video',
+          ),
+          (
+            'voice',
+            _recordingVoice
+                ? Icons.stop_circle_outlined
+                : Icons.mic_none_rounded,
+            _recordingVoice ? 'Yozishni tugatish' : 'Ovozli xabar',
+            _recordingVoice ? _voiceDurationLabel() : 'Mikrofon orqali yozish',
+          ),
+          ('document', Icons.attach_file_rounded, 'Fayl', 'PDF yoki hujjat'),
+        ];
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Xabar turini tanlang', style: theme.textTheme.titleLarge),
+                const SizedBox(height: 14),
+                for (final action in actions)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: IconBadge(
+                      icon: action.$2,
+                      color: action.$1 == 'voice'
+                          ? AppColors.errorRed
+                          : AppColors.studentPrimary,
+                      size: 44,
+                    ),
+                    title: Text(action.$3, style: theme.textTheme.titleSmall),
+                    subtitle: Text(action.$4),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => Navigator.of(context).pop(action.$1),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (kind == null || !mounted) return;
+    await _pickAttachment(kind);
+  }
+
   Future<void> _pickAttachment(String kind) async {
     if (kind == 'voice') {
       if (_recordingVoice) {
@@ -16015,7 +16118,7 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
     if (picked == null || !mounted) return;
     setState(() {
       _attachment = picked;
-      _showAttachmentTray = false;
+      _chatOpen = true;
     });
   }
 
@@ -16073,7 +16176,7 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
       setState(() {
         _recordingVoice = true;
         _voiceSeconds = 0;
-        _showAttachmentTray = true;
+        _chatOpen = true;
       });
     } on Object catch (error) {
       if (!mounted) return;
@@ -16113,7 +16216,7 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
           mimeType: _voiceMimeType,
           messageKind: 'voice',
         );
-        _showAttachmentTray = false;
+        _chatOpen = true;
       });
     } on Object catch (error) {
       _voiceTimer?.cancel();
@@ -16177,7 +16280,7 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
       _messageController.clear();
       setState(() {
         _attachment = null;
-        _showAttachmentTray = false;
+        _chatOpen = true;
       });
       await _loadHistory();
       if (!mounted) return;
@@ -16239,394 +16342,31 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
                         borderRadius: BorderRadius.circular(99),
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 18, 14, 12),
-                      child: Row(
-                        children: [
-                          const IconBadge(
-                            icon: Icons.support_agent_rounded,
-                            color: AppColors.primaryBlue,
-                            size: 52,
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  studentText(language, 'contact_admin'),
-                                  style: theme.textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  studentText(
-                                    language,
-                                    'contact_admin_subtitle',
-                                  ),
-                                  style: theme.textTheme.bodyMedium,
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Yopish',
-                            onPressed: _sending
-                                ? null
-                                : () => Navigator.of(context).pop(false),
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ],
-                      ),
-                    ),
                     Expanded(
-                      child: ColoredBox(
-                        color: AppColors.background.withValues(alpha: .65),
-                        child: ListView(
-                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-                          children: [
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Container(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 420,
-                                ),
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primaryBlue.withValues(
-                                    alpha: .08,
-                                  ),
-                                  borderRadius: const BorderRadius.only(
-                                    topLeft: Radius.circular(18),
-                                    topRight: Radius.circular(18),
-                                    bottomRight: Radius.circular(18),
-                                    bottomLeft: Radius.circular(6),
-                                  ),
-                                  border: Border.all(
-                                    color: AppColors.primaryBlue.withValues(
-                                      alpha: .14,
-                                    ),
-                                  ),
-                                ),
-                                child: Text(
-                                  'Xabaringiz adminga yuboriladi. Rasm, video, ovozli xabar yoki fayl biriktirishingiz mumkin.',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    height: 1.45,
-                                  ),
-                                ),
-                              ),
+                      child: _chatOpen
+                          ? _SupportChatPanel(
+                              language: language,
+                              history: _history,
+                              historyLoading: _historyLoading,
+                              messageController: _messageController,
+                              attachment: _attachment,
+                              sending: _sending,
+                              recordingVoice: _recordingVoice,
+                              voiceDuration: _voiceDurationLabel(),
+                              onBack: _openSupportHome,
+                              onPickAttachment: _showAttachmentPickerSheet,
+                              onRemoveAttachment: () =>
+                                  setState(() => _attachment = null),
+                              onStopVoice: _stopVoiceRecording,
+                              onSubmit: _submit,
+                            )
+                          : _SupportHomePanel(
+                              language: language,
+                              history: _history,
+                              historyLoading: _historyLoading,
+                              onClose: () => Navigator.of(context).pop(false),
+                              onOpenChat: _openSupportChat,
                             ),
-                            const SizedBox(height: 12),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: Container(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 360,
-                                ),
-                                padding: const EdgeInsets.all(13),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primaryBlue,
-                                  borderRadius: const BorderRadius.only(
-                                    topLeft: Radius.circular(18),
-                                    topRight: Radius.circular(18),
-                                    bottomLeft: Radius.circular(18),
-                                    bottomRight: Radius.circular(6),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: AppColors.primaryBlue.withValues(
-                                        alpha: .16,
-                                      ),
-                                      blurRadius: 16,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                                ),
-                                child: Text(
-                                  'Murojaatingiz bitta chatda saqlanadi va admin javobi shu yerga keladi.',
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: Colors.white,
-                                    height: 1.4,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            if (_historyLoading)
-                              const Center(
-                                child: Padding(
-                                  padding: EdgeInsets.all(24),
-                                  child: CircularProgressIndicator(),
-                                ),
-                              )
-                            else if (_history.isEmpty)
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(18),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.surface,
-                                  borderRadius: BorderRadius.circular(22),
-                                  border: Border.all(color: AppColors.border),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      Icons.mark_chat_unread_outlined,
-                                      color: AppColors.muted.withValues(
-                                        alpha: .7,
-                                      ),
-                                      size: 34,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Hali murojaat yo‘q',
-                                      style: theme.textTheme.titleMedium,
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Birinchi xabaringizni pastdan yuboring.',
-                                      textAlign: TextAlign.center,
-                                      style: theme.textTheme.bodyMedium,
-                                    ),
-                                  ],
-                                ),
-                              )
-                            else
-                              for (final message in _history)
-                                _SupportHistoryBubble(
-                                  message: message,
-                                  language: language,
-                                ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surface,
-                        border: const Border(
-                          top: BorderSide(color: AppColors.border),
-                        ),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          TextField(
-                            controller: _subjectController,
-                            enabled: !_sending,
-                            decoration: InputDecoration(
-                              labelText: studentText(
-                                language,
-                                'support_subject',
-                              ),
-                              prefixIcon: const Icon(Icons.title_rounded),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          if (_showAttachmentTray) ...[
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                for (final kind in const [
-                                  ('image', Icons.image_outlined),
-                                  ('video', Icons.videocam_outlined),
-                                  (
-                                    'video_note',
-                                    Icons.radio_button_checked_rounded,
-                                  ),
-                                  ('voice', Icons.mic_none_rounded),
-                                  ('document', Icons.attach_file_rounded),
-                                ])
-                                  OutlinedButton.icon(
-                                    onPressed: _sending
-                                        ? null
-                                        : () => _pickAttachment(kind.$1),
-                                    icon: Icon(
-                                      kind.$1 == 'voice' && _recordingVoice
-                                          ? Icons.stop_circle_outlined
-                                          : kind.$2,
-                                      size: 18,
-                                    ),
-                                    label: Text(
-                                      kind.$1 == 'voice' && _recordingVoice
-                                          ? 'Yozishni tugatish ${_voiceDurationLabel()}'
-                                          : _attachmentKindLabel(kind.$1),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            if (_recordingVoice) ...[
-                              const SizedBox(height: 10),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.errorRed.withValues(
-                                    alpha: .08,
-                                  ),
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: AppColors.errorRed.withValues(
-                                      alpha: .22,
-                                    ),
-                                  ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.mic_rounded,
-                                      color: AppColors.errorRed,
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'Mikrofon yozmoqda: ${_voiceDurationLabel()}',
-                                        style: theme.textTheme.labelLarge
-                                            ?.copyWith(
-                                              color: AppColors.errorRed,
-                                            ),
-                                      ),
-                                    ),
-                                    TextButton.icon(
-                                      onPressed: _sending
-                                          ? null
-                                          : _stopVoiceRecording,
-                                      icon: const Icon(
-                                        Icons.stop_rounded,
-                                        size: 18,
-                                      ),
-                                      label: const Text('To‘xtatish'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 10),
-                          ],
-                          if (_attachment != null) ...[
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.primaryBlue.withValues(
-                                  alpha: .07,
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: AppColors.primaryBlue.withValues(
-                                    alpha: .16,
-                                  ),
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    switch (_attachment!.messageKind) {
-                                      'image' => Icons.image_outlined,
-                                      'video' => Icons.videocam_outlined,
-                                      'video_note' =>
-                                        Icons.radio_button_checked_rounded,
-                                      'voice' => Icons.mic_none_rounded,
-                                      _ => Icons.attach_file_rounded,
-                                    },
-                                    color: AppColors.primaryBlue,
-                                    size: 18,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      _attachment!.fileName,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.labelLarge,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: _sending
-                                        ? null
-                                        : () => setState(
-                                            () => _attachment = null,
-                                          ),
-                                    icon: const Icon(
-                                      Icons.close_rounded,
-                                      size: 18,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                          ],
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              IconButton.filledTonal(
-                                tooltip: 'Biriktirma',
-                                onPressed: _sending
-                                    ? null
-                                    : () => setState(
-                                        () => _showAttachmentTray =
-                                            !_showAttachmentTray,
-                                      ),
-                                icon: Icon(
-                                  _showAttachmentTray
-                                      ? Icons.close_rounded
-                                      : Icons.add_rounded,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextField(
-                                  controller: _messageController,
-                                  enabled: !_sending,
-                                  minLines: 1,
-                                  maxLines: 4,
-                                  decoration: InputDecoration(
-                                    hintText: studentText(
-                                      language,
-                                      'support_message_hint',
-                                    ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 14,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              FilledButton(
-                                onPressed: _sending || _recordingVoice
-                                    ? null
-                                    : _submit,
-                                style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 16,
-                                  ),
-                                ),
-                                child: _sending
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Icon(Icons.send_rounded),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
                     ),
                   ],
                 ),
@@ -16634,6 +16374,784 @@ class _AdminSupportSheetState extends State<_AdminSupportSheet> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _SupportHomePanel extends StatelessWidget {
+  const _SupportHomePanel({
+    required this.language,
+    required this.history,
+    required this.historyLoading,
+    required this.onClose,
+    required this.onOpenChat,
+  });
+
+  final AppLanguage language;
+  final List<AdminInboxMessage> history;
+  final bool historyLoading;
+  final VoidCallback onClose;
+  final VoidCallback onOpenChat;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final recent = history.take(3).toList();
+    return ColoredBox(
+      color: AppColors.background.withValues(alpha: .62),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+        children: [
+          Row(
+            children: [
+              IconButton.filledTonal(
+                tooltip: 'Yopish',
+                onPressed: onClose,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Yordam va qo‘llab-quvvatlash',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              IconButton.filledTonal(
+                tooltip: 'Murojaatlar',
+                onPressed: onOpenChat,
+                icon: const Icon(Icons.history_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SupportIntroCard(),
+          const SizedBox(height: 26),
+          Text('Tezkor bo‘limlar', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 12),
+          _SupportQuickCard(
+            icon: Icons.help_outline_rounded,
+            title: 'Ko‘p so‘raladigan savollar',
+            subtitle: 'Javoblarni toping',
+            onTap: () => _showSupportFaq(context),
+          ),
+          const SizedBox(height: 24),
+          Text('Yordamga murojaat qilish', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 12),
+          InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: onOpenChat,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [
+                    AppColors.studentPrimary,
+                    AppColors.studentSecondary,
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.studentPrimary.withValues(alpha: .22),
+                    blurRadius: 18,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: const Icon(
+                      Icons.post_add_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Yangi murojaat yaratish',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Savol, muammo yoki taklif yuboring',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: Colors.white.withValues(alpha: .86),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: Colors.white),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'So‘nggi murojaatlar',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              if (recent.isNotEmpty)
+                TextButton(
+                  onPressed: onOpenChat,
+                  child: const Text('Barchasi'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (historyLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (recent.isEmpty)
+            _SupportEmptyRequestCard(onTap: onOpenChat)
+          else
+            for (final message in recent) ...[
+              _SupportRequestRow(message: message, onTap: onOpenChat),
+              const SizedBox(height: 8),
+            ],
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFBEB),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFFDE68A)),
+            ),
+            child: Row(
+              children: [
+                const IconBadge(
+                  icon: Icons.schedule_rounded,
+                  color: Color(0xFFF59E0B),
+                  size: 44,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Bizning ish vaqti',
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Har kuni 09:00 - 21:00\nDam olish kunlari ham ishlaymiz',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SupportChatPanel extends StatelessWidget {
+  const _SupportChatPanel({
+    required this.language,
+    required this.history,
+    required this.historyLoading,
+    required this.messageController,
+    required this.attachment,
+    required this.sending,
+    required this.recordingVoice,
+    required this.voiceDuration,
+    required this.onBack,
+    required this.onPickAttachment,
+    required this.onRemoveAttachment,
+    required this.onStopVoice,
+    required this.onSubmit,
+  });
+
+  final AppLanguage language;
+  final List<AdminInboxMessage> history;
+  final bool historyLoading;
+  final TextEditingController messageController;
+  final _ChatAttachmentDraft? attachment;
+  final bool sending;
+  final bool recordingVoice;
+  final String voiceDuration;
+  final VoidCallback onBack;
+  final VoidCallback onPickAttachment;
+  final VoidCallback onRemoveAttachment;
+  final VoidCallback onStopVoice;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final orderedHistory = history.reversed.toList();
+    final status = history.isEmpty
+        ? 'Yangi murojaat'
+        : _supportStatusText(history.first);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Ortga',
+                onPressed: onBack,
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      history.isEmpty
+                          ? 'Yangi murojaat'
+                          : 'Murojaat #${history.first.id.substring(0, 5)}',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      status,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: AppColors.primaryBlue,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Tanlovlar',
+                onPressed: () {},
+                icon: const Icon(Icons.more_horiz_rounded),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ColoredBox(
+            color: AppColors.background.withValues(alpha: .62),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+              children: [
+                _SupportIntroCard(compact: true),
+                const SizedBox(height: 16),
+                if (historyLoading)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: CircularProgressIndicator(),
+                    ),
+                  )
+                else if (orderedHistory.isEmpty)
+                  _SupportChatEmpty()
+                else
+                  for (final message in orderedHistory)
+                    _SupportHistoryBubble(message: message, language: language),
+              ],
+            ),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            border: const Border(top: BorderSide(color: AppColors.border)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (recordingVoice) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.errorRed.withValues(alpha: .08),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: AppColors.errorRed.withValues(alpha: .22),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.mic_rounded,
+                        color: AppColors.errorRed,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Mikrofon yozmoqda: $voiceDuration',
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            color: AppColors.errorRed,
+                          ),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: sending ? null : onStopVoice,
+                        icon: const Icon(Icons.stop_rounded, size: 18),
+                        label: const Text('To‘xtatish'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              if (attachment != null) ...[
+                _SupportDraftAttachmentPreview(
+                  attachment: attachment!,
+                  onRemove: sending ? null : onRemoveAttachment,
+                ),
+                const SizedBox(height: 10),
+              ],
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  IconButton.filledTonal(
+                    tooltip: 'Biriktirma',
+                    onPressed: sending ? null : onPickAttachment,
+                    icon: const Icon(Icons.attach_file_rounded),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: messageController,
+                      enabled: !sending,
+                      minLines: 1,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: studentText(language, 'support_message_hint'),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: sending || recordingVoice ? null : onSubmit,
+                    style: FilledButton.styleFrom(
+                      shape: const CircleBorder(),
+                      minimumSize: const Size(54, 54),
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: sending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send_rounded),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SupportIntroCard extends StatelessWidget {
+  const _SupportIntroCard({this.compact = false});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: EdgeInsets.all(compact ? 14 : 16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.navy.withValues(alpha: .05),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const IconBadge(
+            icon: Icons.support_agent_rounded,
+            color: AppColors.primaryBlue,
+            size: 56,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'LabProof Academy Yordam',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: AppColors.successGreen,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        'Odatda 5 daqiqa ichida javob beramiz',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SupportQuickCard extends StatelessWidget {
+  const _SupportQuickCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            IconBadge(icon: icon, color: AppColors.studentPrimary, size: 44),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  Text(subtitle, style: theme.textTheme.bodyMedium),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SupportEmptyRequestCard extends StatelessWidget {
+  const _SupportEmptyRequestCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.mark_chat_unread_outlined, color: AppColors.muted),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Hali murojaat yo‘q. Birinchi murojaatni yozing.',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SupportRequestRow extends StatelessWidget {
+  const _SupportRequestRow({required this.message, required this.onTap});
+
+  final AdminInboxMessage message;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final statusColor = _supportStatusColor(message);
+    final title = message.subject.trim().isEmpty
+        ? _attachmentKindLabel(message.messageKind)
+        : message.subject.trim();
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Yaratilgan: ${_formatSupportMessageTime(message.createdAt)}',
+                    style: theme.textTheme.labelMedium,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            StatusChip(label: _supportStatusText(message), color: statusColor),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SupportChatEmpty extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 44),
+      child: Column(
+        children: [
+          Icon(
+            Icons.forum_outlined,
+            size: 58,
+            color: AppColors.muted.withValues(alpha: .26),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Hali xabar yo‘q',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Savolingizni yozing yoki biriktirma yuboring.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _showSupportFaq(BuildContext context) async {
+  final theme = Theme.of(context);
+  await showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    backgroundColor: theme.colorScheme.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+    ),
+    builder: (context) {
+      final items = [
+        (
+          'Darslar ochilmasa nima qilish kerak?',
+          'Internet aloqasini tekshiring, ilovani qayta oching va kerak bo‘lsa yordamga murojaat yuboring.',
+        ),
+        (
+          'To‘lovdan keyin kurs qachon ochiladi?',
+          'To‘lov tasdiqlangach obuna holati yangilanadi va pullik mavzular ochiladi.',
+        ),
+        (
+          'Profil ma’lumotlari qayerda saqlanadi?',
+          'Ma’lumotlar akkauntingizga bog‘lanadi va keyingi kirishlarda avtomatik yuklanadi.',
+        ),
+      ];
+      return SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          children: [
+            Text(
+              'Ko‘p so‘raladigan savollar',
+              style: theme.textTheme.titleLarge,
+            ),
+            const SizedBox(height: 12),
+            for (final item in items)
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                title: Text(item.$1, style: theme.textTheme.titleSmall),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(item.$2, style: theme.textTheme.bodyMedium),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+class _SupportDraftAttachmentPreview extends StatelessWidget {
+  const _SupportDraftAttachmentPreview({
+    required this.attachment,
+    required this.onRemove,
+  });
+
+  final _ChatAttachmentDraft attachment;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isImage = attachment.messageKind == 'image';
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.studentPrimary.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.studentPrimary.withValues(alpha: .16),
+        ),
+      ),
+      child: Row(
+        children: [
+          if (isImage)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.memory(
+                attachment.bytes,
+                width: 54,
+                height: 54,
+                fit: BoxFit.cover,
+              ),
+            )
+          else
+            IconBadge(
+              icon: switch (attachment.messageKind) {
+                'video' => Icons.videocam_outlined,
+                'video_note' => Icons.radio_button_checked_rounded,
+                'voice' => Icons.mic_none_rounded,
+                _ => Icons.attach_file_rounded,
+              },
+              color: AppColors.studentPrimary,
+              size: 48,
+            ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _attachmentKindLabel(attachment.messageKind),
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  attachment.fileName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            onPressed: onRemove,
+            icon: const Icon(Icons.close_rounded),
+          ),
+        ],
       ),
     );
   }
@@ -16722,62 +17240,7 @@ class _SupportHistoryBubble extends StatelessWidget {
                   ],
                   if (message.hasAttachment) ...[
                     const SizedBox(height: 10),
-                    InkWell(
-                      onTap: () => unawaited(
-                        _openChatAttachment(message.attachmentUrl!),
-                      ),
-                      borderRadius: BorderRadius.circular(14),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: .14),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: .16),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              message.isImage
-                                  ? Icons.image_outlined
-                                  : message.isVideo
-                                  ? Icons.videocam_outlined
-                                  : message.isAudio
-                                  ? Icons.mic_none_rounded
-                                  : Icons.attach_file_rounded,
-                              color: Colors.white,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                message.attachmentName?.trim().isNotEmpty ==
-                                        true
-                                    ? message.attachmentName!
-                                    : _attachmentKindLabel(message.messageKind),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelLarge?.copyWith(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            const Icon(
-                              Icons.open_in_new_rounded,
-                              color: Colors.white,
-                              size: 16,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    _SupportAttachmentViewer(message: message, outgoing: true),
                   ],
                   const SizedBox(height: 8),
                   Text(
@@ -16843,6 +17306,441 @@ class _SupportHistoryBubble extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SupportAttachmentViewer extends StatelessWidget {
+  const _SupportAttachmentViewer({
+    required this.message,
+    required this.outgoing,
+  });
+
+  final AdminInboxMessage message;
+  final bool outgoing;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = message.attachmentUrl?.trim() ?? '';
+    final fileName = message.attachmentName?.trim().isNotEmpty == true
+        ? message.attachmentName!.trim()
+        : _attachmentKindLabel(message.messageKind);
+    final foreground = outgoing ? Colors.white : AppColors.navy;
+    final subtle = outgoing
+        ? Colors.white.withValues(alpha: .78)
+        : AppColors.muted;
+    final panel = outgoing
+        ? Colors.white.withValues(alpha: .14)
+        : AppColors.background;
+    final border = outgoing
+        ? Colors.white.withValues(alpha: .18)
+        : AppColors.border;
+
+    if (url.isEmpty) return const SizedBox.shrink();
+    if (message.isImage) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Image.network(
+          url,
+          width: double.infinity,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => _SupportFileCard(
+            icon: Icons.broken_image_outlined,
+            title: fileName,
+            subtitle: 'Rasmni yuklab bo‘lmadi',
+            foreground: foreground,
+            subtle: subtle,
+            panel: panel,
+            border: border,
+          ),
+        ),
+      );
+    }
+    if (message.isVideo) {
+      return _SupportVideoPlayer(
+        url: url,
+        title: fileName,
+        isRound: message.messageKind == 'video_note',
+        foreground: foreground,
+        panel: panel,
+        border: border,
+      );
+    }
+    if (message.isAudio) {
+      return _SupportAudioPlayer(
+        url: url,
+        title: fileName,
+        foreground: foreground,
+        subtle: subtle,
+        panel: panel,
+        border: border,
+      );
+    }
+    return InkWell(
+      onTap: () => unawaited(_openChatAttachment(url)),
+      borderRadius: BorderRadius.circular(14),
+      child: _SupportFileCard(
+        icon: Icons.insert_drive_file_outlined,
+        title: fileName,
+        subtitle: _fileSizeLabel(message.attachmentSize).isEmpty
+            ? 'Fayl biriktirilgan'
+            : _fileSizeLabel(message.attachmentSize),
+        foreground: foreground,
+        subtle: subtle,
+        panel: panel,
+        border: border,
+        trailing: Icons.open_in_new_rounded,
+      ),
+    );
+  }
+}
+
+class _SupportFileCard extends StatelessWidget {
+  const _SupportFileCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.foreground,
+    required this.subtle,
+    required this.panel,
+    required this.border,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color foreground;
+  final Color subtle;
+  final Color panel;
+  final Color border;
+  final IconData? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: panel,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: foreground, size: 20),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: foreground,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(color: subtle),
+                ),
+              ],
+            ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            Icon(trailing, color: foreground, size: 18),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SupportVideoPlayer extends StatefulWidget {
+  const _SupportVideoPlayer({
+    required this.url,
+    required this.title,
+    required this.isRound,
+    required this.foreground,
+    required this.panel,
+    required this.border,
+  });
+
+  final String url;
+  final String title;
+  final bool isRound;
+  final Color foreground;
+  final Color panel;
+  final Color border;
+
+  @override
+  State<_SupportVideoPlayer> createState() => _SupportVideoPlayerState();
+}
+
+class _SupportVideoPlayerState extends State<_SupportVideoPlayer> {
+  VideoPlayerController? _controller;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _setup();
+  }
+
+  Future<void> _setup() async {
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null) {
+      setState(() => _failed = true);
+      return;
+    }
+    final controller = VideoPlayerController.networkUrl(uri);
+    try {
+      await controller.initialize();
+      await controller.setLooping(false);
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() => _controller = controller);
+    } on Object {
+      await controller.dispose();
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_controller?.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final controller = _controller;
+    if (_failed) {
+      return _SupportFileCard(
+        icon: Icons.videocam_off_outlined,
+        title: widget.title,
+        subtitle: 'Videoni shu joyda ochib bo‘lmadi',
+        foreground: widget.foreground,
+        subtle: widget.foreground.withValues(alpha: .72),
+        panel: widget.panel,
+        border: widget.border,
+      );
+    }
+    if (controller == null || !controller.value.isInitialized) {
+      return Container(
+        height: widget.isRound ? 160 : 180,
+        decoration: BoxDecoration(
+          color: widget.panel,
+          borderRadius: BorderRadius.circular(widget.isRound ? 999 : 16),
+          border: Border.all(color: widget.border),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    final video = ClipRRect(
+      borderRadius: BorderRadius.circular(widget.isRound ? 999 : 16),
+      child: AspectRatio(
+        aspectRatio: controller.value.aspectRatio == 0
+            ? 1
+            : controller.value.aspectRatio,
+        child: VideoPlayer(controller),
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            if (widget.isRound)
+              Center(child: SizedBox(width: 190, height: 190, child: video))
+            else
+              video,
+            IconButton.filled(
+              onPressed: () {
+                controller.value.isPlaying
+                    ? controller.pause()
+                    : controller.play();
+                setState(() {});
+              },
+              icon: Icon(
+                controller.value.isPlaying
+                    ? Icons.pause_rounded
+                    : Icons.play_arrow_rounded,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          widget.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.labelLarge?.copyWith(
+            color: widget.foreground,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SupportAudioPlayer extends StatefulWidget {
+  const _SupportAudioPlayer({
+    required this.url,
+    required this.title,
+    required this.foreground,
+    required this.subtle,
+    required this.panel,
+    required this.border,
+  });
+
+  final String url;
+  final String title;
+  final Color foreground;
+  final Color subtle;
+  final Color panel;
+  final Color border;
+
+  @override
+  State<_SupportAudioPlayer> createState() => _SupportAudioPlayerState();
+}
+
+class _SupportAudioPlayerState extends State<_SupportAudioPlayer> {
+  late final audio.AudioPlayer _player;
+  audio.PlayerState _state = audio.PlayerState.stopped;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = audio.AudioPlayer();
+    _player.onPlayerStateChanged.listen((state) {
+      if (mounted) setState(() => _state = state);
+    });
+    _player.onPositionChanged.listen((position) {
+      if (mounted) setState(() => _position = position);
+    });
+    _player.onDurationChanged.listen((duration) {
+      if (mounted) setState(() => _duration = duration);
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_player.dispose());
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    try {
+      if (_state == audio.PlayerState.playing) {
+        await _player.pause();
+      } else {
+        await _player.play(audio.UrlSource(widget.url));
+      }
+    } on Object {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  String _clock(Duration value) {
+    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_failed) {
+      return _SupportFileCard(
+        icon: Icons.volume_off_outlined,
+        title: widget.title,
+        subtitle: 'Ovozni shu joyda eshittirib bo‘lmadi',
+        foreground: widget.foreground,
+        subtle: widget.subtle,
+        panel: widget.panel,
+        border: widget.border,
+      );
+    }
+    final progress = _duration.inMilliseconds == 0
+        ? 0.0
+        : (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: widget.panel,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: widget.border),
+      ),
+      child: Row(
+        children: [
+          IconButton.filledTonal(
+            onPressed: _toggle,
+            icon: Icon(
+              _state == audio.PlayerState.playing
+                  ? Icons.pause_rounded
+                  : Icons.play_arrow_rounded,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: widget.foreground,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(99),
+                  child: LinearProgressIndicator(
+                    minHeight: 5,
+                    value: progress,
+                    backgroundColor: widget.subtle.withValues(alpha: .24),
+                    valueColor: AlwaysStoppedAnimation(widget.foreground),
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  _duration == Duration.zero
+                      ? _clock(_position)
+                      : '${_clock(_position)} / ${_clock(_duration)}',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: widget.subtle,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
