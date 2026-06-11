@@ -146,6 +146,46 @@ class SupabaseAcademyRepository {
     }, onConflict: 'section,key');
   }
 
+  Future<Map<String, String>> loadPublicSocialLinks() async {
+    try {
+      final row = await _supabase
+          .from('admin_settings')
+          .select('value')
+          .eq('section', 'settings')
+          .eq('key', 'social_links')
+          .maybeSingle();
+      final value = row?['value'];
+      if (value is! Map) return const {};
+      return {
+        for (final entry in value.entries)
+          if (entry.value != null && entry.value.toString().trim().isNotEmpty)
+            entry.key.toString(): entry.value.toString().trim(),
+      };
+    } on Object {
+      return const {};
+    }
+  }
+
+  Future<Map<String, dynamic>?> loadPublicAdminSetting({
+    required String section,
+    required String key,
+  }) async {
+    try {
+      final row = await _supabase
+          .from('admin_settings')
+          .select('value')
+          .eq('section', section)
+          .eq('key', key)
+          .maybeSingle();
+      final value = row?['value'];
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return value.cast<String, dynamic>();
+      return null;
+    } on Object {
+      return null;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> loadAdminSubscriptionPlans() async {
     final rows = await _supabase
         .from('subscription_plans')

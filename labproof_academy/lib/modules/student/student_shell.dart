@@ -5,15 +5,19 @@ import 'dart:ui';
 import 'package:audioplayers/audioplayers.dart' as audio;
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:in_app_review/in_app_review.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:video_player/video_player.dart';
@@ -198,7 +202,7 @@ class _StudentShellState extends State<StudentShell> {
   static const _repository = SupabaseAcademyRepository();
   static const _appVersionName = String.fromEnvironment(
     'APP_VERSION_NAME',
-    defaultValue: '1.2.0',
+    defaultValue: '1.3.0',
   );
 
   _StudentTab _tab = _StudentTab.home;
@@ -462,9 +466,9 @@ class _StudentShellState extends State<StudentShell> {
     );
   }
 
-  Future<void> _checkForUpdateManually() async {
+  Future<AppUpdateCheckResult> _checkForUpdateManually() async {
     final result = await widget.onCheckForUpdate();
-    if (!mounted || result == AppUpdateCheckResult.available) return;
+    if (!mounted || result == AppUpdateCheckResult.available) return result;
     switch (result) {
       case AppUpdateCheckResult.unavailable:
         _showInfo('Sizda so‘nggi versiya o‘rnatilgan.');
@@ -477,6 +481,7 @@ class _StudentShellState extends State<StudentShell> {
       case AppUpdateCheckResult.available:
         break;
     }
+    return result;
   }
 
   Future<void> _openProfileEditor() async {
@@ -11102,7 +11107,7 @@ class _ProfileScreen extends StatelessWidget {
   final ValueChanged<bool> onNotificationsChanged;
   final Future<void> Function() onEditProfile;
   final Future<void> Function() onContactAdmin;
-  final Future<void> Function() onCheckForUpdate;
+  final Future<AppUpdateCheckResult> Function() onCheckForUpdate;
   final VoidCallback onSignOut;
   final Future<void> Function() onSecurityChanged;
   final String appVersionName;
@@ -11171,6 +11176,7 @@ class _ProfileScreen extends StatelessWidget {
           language: language,
           appVersionName: appVersionName,
           onCheckForUpdate: onCheckForUpdate,
+          onContactAdmin: onContactAdmin,
         ),
       );
     }
@@ -12981,76 +12987,526 @@ class _ProfileBillingSheetState extends State<_ProfileBillingSheet> {
   }
 }
 
-class _ProfileAboutSheet extends StatelessWidget {
+class _ProfileAboutSheet extends StatefulWidget {
   const _ProfileAboutSheet({
     required this.language,
     required this.appVersionName,
     required this.onCheckForUpdate,
+    required this.onContactAdmin,
   });
 
   final AppLanguage language;
   final String appVersionName;
-  final Future<void> Function() onCheckForUpdate;
+  final Future<AppUpdateCheckResult> Function() onCheckForUpdate;
+  final Future<void> Function() onContactAdmin;
+
+  @override
+  State<_ProfileAboutSheet> createState() => _ProfileAboutSheetState();
+}
+
+class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
+  static const _repository = SupabaseAcademyRepository();
+
+  PackageInfo? _packageInfo;
+  Map<String, String> _socialLinks = const {};
+  String? _termsText;
+  String? _privacyText;
+  String _cacheLabel = '24.8 MB';
+  bool _hasAvailableUpdate = false;
+  String? _latestVersionLabel;
+  bool _checkingUpdate = false;
+  bool _clearingCache = false;
+
+  String get _versionName => _packageInfo?.version.trim().isNotEmpty == true
+      ? _packageInfo!.version
+      : widget.appVersionName;
+  String get _buildNumber => _packageInfo?.buildNumber.trim().isNotEmpty == true
+      ? _packageInfo!.buildNumber
+      : '120';
+  String get _versionLabel => '$_versionName ($_buildNumber)';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadAboutData());
+  }
+
+  Future<void> _loadAboutData() async {
+    final packageInfo = await PackageInfo.fromPlatform().catchError(
+      (_) => PackageInfo(
+        appName: 'LabProof Academy',
+        packageName: 'uz.labproof.academy',
+        version: widget.appVersionName,
+        buildNumber: '120',
+        buildSignature: '',
+        installerStore: null,
+      ),
+    );
+    final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+    final releaseLookup = await const AppUpdateService().findAvailableUpdate(
+      currentVersionCode: currentBuild,
+    );
+    final socialLinks = await _repository.loadPublicSocialLinks();
+    final legalTerms = await _repository.loadPublicAdminSetting(
+      section: 'legal',
+      key: 'legal_terms',
+    );
+    final legalPrivacy = await _repository.loadPublicAdminSetting(
+      section: 'legal',
+      key: 'legal_privacy',
+    );
+    if (!mounted) return;
+    setState(() {
+      _packageInfo = packageInfo;
+      _hasAvailableUpdate = releaseLookup.release != null;
+      _latestVersionLabel = releaseLookup.release?.versionName;
+      _socialLinks = {
+        'telegram': 'https://t.me/labproofacademy',
+        'instagram': 'https://instagram.com/labproofacademy',
+        'youtube': 'https://youtube.com/@labproofacademy',
+        'facebook': 'https://facebook.com/labproofacademy',
+        ...socialLinks,
+      };
+      _termsText = legalTerms?['text']?.toString().trim().isNotEmpty == true
+          ? legalTerms!['text'].toString()
+          : _labproofTermsText;
+      _privacyText = legalPrivacy?['text']?.toString().trim().isNotEmpty == true
+          ? legalPrivacy!['text'].toString()
+          : _labproofPrivacyText;
+    });
+  }
+
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Havolani ochib bo‘lmadi.')));
+    }
+  }
+
+  Future<void> _showLegal(String title, String body) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _AboutDocumentSheet(title: title, body: body),
+    );
+  }
+
+  Future<void> _showAppDetails() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _AboutAppDetailsSheet(
+        versionLabel: _versionLabel,
+        latest: !_hasAvailableUpdate,
+      ),
+    );
+  }
+
+  Future<void> _rateApp() async {
+    try {
+      final review = InAppReview.instance;
+      if (await review.isAvailable()) {
+        await review.requestReview();
+      } else {
+        await review.openStoreListing(appStoreId: 'labproof-academy');
+      }
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Baholash oynasini ochib bo‘lmadi.')),
+      );
+    }
+  }
+
+  Future<void> _shareApp() async {
+    await SharePlus.instance.share(
+      ShareParams(
+        text:
+            'LabProof Academy ilovasini yuklab oling:\nhttps://labproof.uz/app',
+      ),
+    );
+  }
+
+  Future<void> _checkUpdate() async {
+    setState(() => _checkingUpdate = true);
+    final result = await widget.onCheckForUpdate();
+    if (!mounted) return;
+    setState(() => _checkingUpdate = false);
+    if (result == AppUpdateCheckResult.unavailable ||
+        result == AppUpdateCheckResult.skipped) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Siz eng so‘nggi versiyadan foydalanyapsiz.'),
+        ),
+      );
+    } else if (result == AppUpdateCheckResult.serverUnavailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Yangilanish serveriga ulanib bo‘lmadi.')),
+      );
+    }
+  }
+
+  Future<void> _clearCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.delete_outline_rounded),
+        title: const Text('Keshni tozalash'),
+        content: const Text(
+          'Kesh fayllarini o‘chirishni xohlaysizmi?\n\nRasmlar, video keshi va vaqtinchalik fayllar tozalanadi. Foydalanuvchi ma’lumotlari o‘chirilmaydi.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Bekor qilish'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Tozalash'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _clearingCache = true);
+    await DefaultCacheManager().emptyCache().catchError((_) {});
+    imageCache.clear();
+    imageCache.clearLiveImages();
+    if (!mounted) return;
+    setState(() {
+      _cacheLabel = '0 MB';
+      _clearingCache = false;
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Kesh fayllari tozalandi.')));
+  }
 
   @override
   Widget build(BuildContext context) {
-    String t(String key) => _profileText(language, key);
-    return _ProfileModalScaffold(
-      title: t('about'),
-      child: Column(
+    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : AppColors.navy;
+    final muted = isDark ? AppColors.studentMuted : AppColors.muted;
+    final surface = isDark ? AppColors.studentSurface : Colors.white;
+    final border = isDark
+        ? Colors.white.withValues(alpha: .08)
+        : AppColors.border;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          MediaQuery.viewInsetsOf(context).bottom + 18,
+        ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  _AboutIconButton(
+                    icon: Icons.arrow_back_rounded,
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'Ilova haqida',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: textColor,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  _AboutIconButton(
+                    icon: Icons.help_outline_rounded,
+                    onPressed: () => unawaited(widget.onContactAdmin()),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _AboutHeaderCard(
+                versionLabel: _versionLabel,
+                latest: !_hasAvailableUpdate,
+                surface: surface,
+                border: border,
+                muted: muted,
+                textColor: textColor,
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Ilova haqida',
+                style: theme.textTheme.titleSmall?.copyWith(color: muted),
+              ),
+              const SizedBox(height: 10),
+              _AboutMenuPanel(
+                surface: surface,
+                border: border,
+                children: [
+                  _AboutMenuTile(
+                    icon: Icons.info_outline_rounded,
+                    title: 'Ilova haqida',
+                    subtitle: 'Ilova, versiya va muallif haqida',
+                    onTap: _showAppDetails,
+                  ),
+                  _AboutMenuTile(
+                    icon: Icons.gpp_good_outlined,
+                    title: 'Foydalanish shartlari',
+                    subtitle: 'Ilovadan foydalanish qoidalari',
+                    onTap: () => unawaited(
+                      _showLegal(
+                        'Foydalanish shartlari',
+                        _termsText ?? _labproofTermsText,
+                      ),
+                    ),
+                  ),
+                  _AboutMenuTile(
+                    icon: Icons.lock_outline_rounded,
+                    title: 'Maxfiylik siyosati',
+                    subtitle: 'Ma’lumotlaringiz qanday himoyalanadi',
+                    onTap: () => unawaited(
+                      _showLegal(
+                        'Maxfiylik siyosati',
+                        _privacyText ?? _labproofPrivacyText,
+                      ),
+                    ),
+                  ),
+                  _AboutMenuTile(
+                    icon: Icons.support_agent_rounded,
+                    title: 'Yordam va qo‘llab-quvvatlash',
+                    subtitle: 'Savollaringiz bormi? Biz yordam beramiz',
+                    onTap: () => unawaited(widget.onContactAdmin()),
+                  ),
+                  _AboutMenuTile(
+                    icon: Icons.star_border_rounded,
+                    title: 'Ilovani baholash',
+                    subtitle: 'Bizni baholang va fikringizni yozing',
+                    onTap: _rateApp,
+                  ),
+                  _AboutMenuTile(
+                    icon: Icons.share_outlined,
+                    title: 'Ilovani do‘stlar bilan ulashish',
+                    subtitle: 'Academy ilovasini ulashing',
+                    onTap: _shareApp,
+                    last: true,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _AboutInfoActionCard(
+                icon: Icons.sync_rounded,
+                title: 'Yangilanishlarni tekshirish',
+                subtitle: 'So‘nggi yangilanishni tekshiring',
+                value: _checkingUpdate
+                    ? '...'
+                    : _hasAvailableUpdate
+                    ? (_latestVersionLabel ?? 'Yangi')
+                    : _versionName,
+                color: AppColors.studentPrimary,
+                surface: surface,
+                border: border,
+                onTap: _checkingUpdate ? null : _checkUpdate,
+              ),
+              const SizedBox(height: 10),
+              _AboutInfoActionCard(
+                icon: Icons.delete_outline_rounded,
+                title: 'Keshni tozalash',
+                subtitle: 'Ilova keshini o‘chirish',
+                value: _clearingCache ? '...' : _cacheLabel,
+                color: AppColors.errorRed,
+                surface: isDark
+                    ? AppColors.studentSurface
+                    : const Color(0xFFFFF1F2),
+                border: isDark
+                    ? Colors.white.withValues(alpha: .08)
+                    : AppColors.errorRed.withValues(alpha: .12),
+                onTap: _clearingCache ? null : _clearCache,
+              ),
+              const SizedBox(height: 18),
+              _AboutAppInfoCard(
+                versionLabel: _versionLabel,
+                surface: surface,
+                border: border,
+                muted: muted,
+                textColor: textColor,
+              ),
+              const SizedBox(height: 18),
+              _AboutSocialCard(
+                links: _socialLinks,
+                surface: surface,
+                border: border,
+                onOpen: _openUrl,
+              ),
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppColors.studentPrimary.withValues(alpha: .13)
+                      : AppColors.studentPrimary.withValues(alpha: .07),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: AppColors.studentPrimary.withValues(alpha: .16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const IconBadge(
+                      icon: Icons.verified_user_outlined,
+                      color: AppColors.studentPrimary,
+                      size: 44,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Siz xavfsiz foydalanyapsiz',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: AppColors.studentPrimary,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Ilovangiz muntazam ravishda yangilanadi va ma’lumotlaringiz ishonchli himoyalangan.',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: muted,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
+              Center(
+                child: Text(
+                  '© 2026 LabProof.\nBarcha huquqlar himoyalangan.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: muted,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AboutIconButton extends StatelessWidget {
+  const _AboutIconButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filledTonal(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      style: IconButton.styleFrom(
+        fixedSize: const Size(46, 46),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+}
+
+class _AboutHeaderCard extends StatelessWidget {
+  const _AboutHeaderCard({
+    required this.versionLabel,
+    required this.latest,
+    required this.surface,
+    required this.border,
+    required this.muted,
+    required this.textColor,
+  });
+
+  final String versionLabel;
+  final bool latest;
+  final Color surface;
+  final Color border;
+  final Color muted;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: border),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.navy.withValues(alpha: .04),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ProfileSectionPanel(
-            icon: Icons.science_rounded,
-            title: 'LabProof Academy',
-            subtitle:
-                '${studentText(language, 'version_label')} v$appVersionName',
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: const [
-                _ProfileChip(label: 'Student app', icon: Icons.school_rounded),
-                _ProfileChip(label: 'Progress', icon: Icons.bar_chart_rounded),
-                _ProfileChip(label: 'Sertifikat', icon: Icons.verified_rounded),
+          const _LabProofLogoMark(size: 72),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'LabProof Academy',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: textColor,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      'Versiya $versionLabel',
+                      style: theme.textTheme.labelLarge?.copyWith(color: muted),
+                    ),
+                    StatusChip(
+                      label: latest ? 'So‘nggi versiya' : 'Yangilash mavjud',
+                      color: latest ? AppColors.successGreen : AppColors.amber,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Ta’lim olishni oson, qiziqarli va samarali qilamiz.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: muted,
+                    height: 1.35,
+                  ),
+                ),
               ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _ProfileSheetTitle('Asosiy imkoniyatlar'),
-          const _ProfileFeatureList(
-            items: [
-              (
-                Icons.menu_book_rounded,
-                'Modullar va mavzularni ketma-ket o‘rganish',
-              ),
-              (Icons.quiz_rounded, 'Test natijalarini progressga yozish'),
-              (
-                Icons.workspace_premium_rounded,
-                'Pullik kontentni obuna orqali ochish',
-              ),
-              (
-                Icons.support_agent_rounded,
-                'Admin bilan ilova ichida bog‘lanish',
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _AboutBlock(title: t('about_goal'), body: t('about_goal_text')),
-          _AboutBlock(title: t('about_how'), body: t('about_how_text')),
-          _ProfilePolicyCard(
-            blocks: [
-              (t('terms'), t('terms_text')),
-              (t('privacy'), t('privacy_text')),
-              (t('payment_policy'), t('payment_policy_text')),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => unawaited(onCheckForUpdate()),
-              icon: const Icon(Icons.system_update_alt_rounded),
-              label: Text(t('check_update')),
             ),
           ),
         ],
@@ -13058,6 +13514,548 @@ class _ProfileAboutSheet extends StatelessWidget {
     );
   }
 }
+
+class _LabProofLogoMark extends StatelessWidget {
+  const _LabProofLogoMark({required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF8B5CF6), Color(0xFF5B35F5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(size * .28),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.studentPrimary.withValues(alpha: .22),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Icon(Icons.science_rounded, color: Colors.white, size: size * .44),
+          Positioned(
+            bottom: size * .18,
+            child: Icon(
+              Icons.school_rounded,
+              color: Colors.white,
+              size: size * .28,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutMenuPanel extends StatelessWidget {
+  const _AboutMenuPanel({
+    required this.children,
+    required this.surface,
+    required this.border,
+  });
+
+  final List<Widget> children;
+  final Color surface;
+  final Color border;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: border),
+      ),
+      child: Column(children: children),
+    );
+  }
+}
+
+class _AboutMenuTile extends StatelessWidget {
+  const _AboutMenuTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.last = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                IconBadge(
+                  icon: icon,
+                  color: AppColors.studentPrimary,
+                  size: 42,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: theme.textTheme.titleSmall),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelLarge,
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+              ],
+            ),
+            if (!last)
+              const Padding(
+                padding: EdgeInsets.only(left: 54, top: 12),
+                child: Divider(height: 1),
+              )
+            else
+              const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AboutInfoActionCard extends StatelessWidget {
+  const _AboutInfoActionCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.color,
+    required this.surface,
+    required this.border,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String value;
+  final Color color;
+  final Color surface;
+  final Color border;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: border),
+        ),
+        child: Row(
+          children: [
+            IconBadge(icon: icon, color: color, size: 42),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 3),
+                  Text(subtitle, style: theme.textTheme.labelLarge),
+                ],
+              ),
+            ),
+            Text(
+              value,
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AboutAppInfoCard extends StatelessWidget {
+  const _AboutAppInfoCard({
+    required this.versionLabel,
+    required this.surface,
+    required this.border,
+    required this.muted,
+    required this.textColor,
+  });
+
+  final String versionLabel;
+  final Color surface;
+  final Color border;
+  final Color muted;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _AboutInfoRow(Icons.badge_outlined, 'Ilova nomi', 'LabProof Academy'),
+          _AboutInfoRow(Icons.info_outline_rounded, 'Versiya', versionLabel),
+          const _AboutInfoRow(
+            Icons.event_outlined,
+            'Yayilgan sana',
+            '09.06.2026',
+          ),
+          const _AboutInfoRow(
+            Icons.person_outline_rounded,
+            'Ishlab chiquvchi',
+            'LabProof Team',
+          ),
+          const _AboutInfoRow(
+            Icons.language_rounded,
+            'Veb-sayt',
+            'https://labproof.uz',
+          ),
+          const _AboutInfoRow(
+            Icons.mail_outline_rounded,
+            'Elektron pochta',
+            'support@labproof.uz',
+          ),
+          const _AboutInfoRow(
+            Icons.phone_outlined,
+            'Telefon',
+            '+998 90 123 45 67',
+          ),
+          const _AboutInfoRow(
+            Icons.location_on_outlined,
+            'Manzil',
+            'Toshkent shahri',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutInfoRow extends StatelessWidget {
+  const _AboutInfoRow(this.icon, this.label, this.value);
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        children: [
+          Icon(icon, size: 19, color: AppColors.muted),
+          const SizedBox(width: 12),
+          Expanded(child: Text(label, style: theme.textTheme.bodyMedium)),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutSocialCard extends StatelessWidget {
+  const _AboutSocialCard({
+    required this.links,
+    required this.surface,
+    required this.border,
+    required this.onOpen,
+  });
+
+  final Map<String, String> links;
+  final Color surface;
+  final Color border;
+  final Future<void> Function(String url) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final items = [
+      ('telegram', Icons.telegram_rounded, 'Telegram', const Color(0xFF229ED9)),
+      (
+        'instagram',
+        Icons.camera_alt_rounded,
+        'Instagram',
+        const Color(0xFFE1306C),
+      ),
+      (
+        'youtube',
+        Icons.play_circle_fill_rounded,
+        'YouTube',
+        const Color(0xFFFF0000),
+      ),
+      ('facebook', Icons.facebook_rounded, 'Facebook', const Color(0xFF1877F2)),
+    ];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Bizning ijtimoiy tarmoqlarimiz',
+            style: theme.textTheme.titleSmall,
+          ),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              for (final item in items)
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () {
+                      final link = links[item.$1]?.trim();
+                      if (link != null && link.isNotEmpty) {
+                        unawaited(onOpen(link));
+                      }
+                    },
+                    child: Column(
+                      children: [
+                        IconBadge(icon: item.$2, color: item.$4, size: 46),
+                        const SizedBox(height: 7),
+                        Text(
+                          item.$3,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutDocumentSheet extends StatelessWidget {
+  const _AboutDocumentSheet({required this.title, required this.body});
+
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 20,
+        ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                body,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(height: 1.52),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AboutAppDetailsSheet extends StatelessWidget {
+  const _AboutAppDetailsSheet({
+    required this.versionLabel,
+    required this.latest,
+  });
+
+  final String versionLabel;
+  final bool latest;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          MediaQuery.viewInsetsOf(context).bottom + 20,
+        ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _AboutHeaderCard(
+                versionLabel: versionLabel,
+                latest: latest,
+                surface: Theme.of(context).brightness == Brightness.dark
+                    ? AppColors.studentSurface
+                    : Colors.white,
+                border: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white.withValues(alpha: .08)
+                    : AppColors.border,
+                muted: Theme.of(context).brightness == Brightness.dark
+                    ? AppColors.studentMuted
+                    : AppColors.muted,
+                textColor: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white
+                    : AppColors.navy,
+              ),
+              const SizedBox(height: 16),
+              _AboutBlock(
+                title: 'Ilova maqsadi',
+                body:
+                    'LabProof Academy laboratoriya sohasi bo‘yicha bilim olishni oson, qiziqarli va samarali qilish uchun yaratilgan.',
+              ),
+              _AboutBlock(
+                title: 'Platforma haqida',
+                body:
+                    'Ilova kurslar, video va matnli darslar, testlar, progress va premium obunani bitta qulay mobil tajribada jamlaydi.',
+              ),
+              _AboutBlock(
+                title: 'Asosiy imkoniyatlar',
+                body:
+                    'Kurslarni ketma-ket o‘rganish, test topshirish, natijalarni kuzatish, support chat va premium kontentdan foydalanish.',
+              ),
+              _AboutBlock(
+                title: 'Ishlab chiquvchi haqida',
+                body:
+                    'LabProof Team ta’lim texnologiyalari va laboratoriya yo‘nalishidagi raqamli o‘quv mahsulotlarini ishlab chiqadi.',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+const _labproofTermsText = '''
+LabProof Academy ilovasidan foydalanish shartlari
+
+Oxirgi yangilanish sanasi: 09.06.2026
+
+LabProof Academy ilovasidan foydalanish orqali siz ushbu foydalanish shartlariga rozilik bildirasiz.
+
+1. Umumiy qoidalar
+LabProof Academy - bu foydalanuvchilarga ta’lim olish, kurslarni o‘rganish va bilimlarini rivojlantirish imkonini beruvchi onlayn ta’lim platformasidir.
+
+2. Foydalanuvchi hisobi
+Foydalanuvchi ro‘yxatdan o‘tishda to‘g‘ri ma’lumotlarni taqdim etishi shart. Hisob ma’lumotlarini uchinchi shaxslarga bermaslik foydalanuvchining mas’uliyatidadir.
+
+3. Premium obunalar va to‘lovlar
+Premium xizmatlar pullik asosda taqdim etiladi. To‘lov muvaffaqiyatli amalga oshirilgandan so‘ng obuna faollashadi.
+
+4. Taqiqlangan harakatlar
+Ilova faoliyatiga zarar yetkazish, boshqa foydalanuvchilar ma’lumotlariga ruxsatsiz kirish va mualliflik huquqi bilan himoyalangan materiallarni ruxsatsiz tarqatish taqiqlanadi.
+
+5. Intellektual mulk huquqlari
+Ilovadagi barcha materiallar, dizayn elementlari, logotiplar va kontent LabProof Academy yoki tegishli huquq egalariga tegishlidir.
+
+6. Bog‘lanish
+Email: support@labproof.uz
+''';
+
+const _labproofPrivacyText = '''
+LabProof Academy maxfiylik siyosati
+
+Oxirgi yangilanish sanasi: 09.06.2026
+
+LabProof Academy foydalanuvchilarning shaxsiy ma’lumotlari xavfsizligini ta’minlashga katta ahamiyat beradi.
+
+1. Yig‘iladigan ma’lumotlar
+Ism, familiya, telefon raqami, profil rasmi, qurilma ma’lumotlari, ilova versiyasi, kurs progressi, sertifikatlar va test natijalari yig‘ilishi mumkin.
+
+2. Ma’lumotlardan foydalanish
+Ma’lumotlar xizmatlarni taqdim etish, hisobni boshqarish, texnik yordam ko‘rsatish, to‘lovlarni qayta ishlash, xavfsizlik va statistik tahlil uchun ishlatiladi.
+
+3. Ma’lumotlarni himoya qilish
+Ma’lumotlarni shifrlash, xavfsiz serverlar, kirishni nazorat qilish, PIN va biometrik himoya imkoniyatlari qo‘llanadi.
+
+4. Uchinchi tomon xizmatlari
+To‘lov tizimlari, analitika va xabarnoma xizmatlari bilan zarur ma’lumot almashinuvi amalga oshirilishi mumkin.
+
+5. Foydalanuvchi huquqlari
+Foydalanuvchi o‘z ma’lumotlarini ko‘rish, yangilash, hisobni o‘chirishni so‘rash va marketing xabarlarini rad etish huquqiga ega.
+
+6. Bog‘lanish
+Email: support@labproof.uz
+''';
 
 class _ProfileModalScaffold extends StatelessWidget {
   const _ProfileModalScaffold({required this.title, required this.child});
