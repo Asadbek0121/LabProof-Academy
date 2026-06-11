@@ -2243,10 +2243,6 @@ class _HomeDashboard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final iconColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final headerButtonBg = isDark
-        ? Colors.white.withValues(alpha: .08)
-        : AppColors.studentPrimary.withValues(alpha: .10);
-
     Widget headerCircleButton({
       required String tooltip,
       required VoidCallback onPressed,
@@ -2258,7 +2254,7 @@ class _HomeDashboard extends StatelessWidget {
         child: SizedBox.square(
           dimension: 56,
           child: Material(
-            color: headerButtonBg,
+            color: Colors.transparent,
             shape: const CircleBorder(),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
@@ -10242,9 +10238,7 @@ class _CommunityScreen extends StatelessWidget {
                 style: IconButton.styleFrom(
                   fixedSize: const Size.square(52),
                   padding: EdgeInsets.zero,
-                  backgroundColor: isDark
-                      ? Colors.white.withValues(alpha: .06)
-                      : Colors.black.withValues(alpha: .04),
+                  backgroundColor: Colors.transparent,
                   foregroundColor: isDark
                       ? Colors.white
                       : const Color(0xFF0F172A),
@@ -10260,9 +10254,7 @@ class _CommunityScreen extends StatelessWidget {
                   style: IconButton.styleFrom(
                     fixedSize: const Size.square(52),
                     padding: EdgeInsets.zero,
-                    backgroundColor: isDark
-                        ? Colors.white.withValues(alpha: .06)
-                        : Colors.black.withValues(alpha: .04),
+                    backgroundColor: Colors.transparent,
                     shape: const CircleBorder(),
                   ),
                   icon: Icon(
@@ -10893,9 +10885,7 @@ class _ProgressCircleAction extends StatelessWidget {
       message: tooltip,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: dark
-              ? Colors.white.withValues(alpha: .08)
-              : AppColors.studentPrimary.withValues(alpha: .10),
+          color: Colors.transparent,
           shape: BoxShape.circle,
         ),
         child: SizedBox.square(
@@ -16589,20 +16579,9 @@ class _ProfileCircleButton extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(22),
         onTap: onTap,
-        child: Container(
+        child: SizedBox(
           width: 44,
           height: 44,
-          decoration: BoxDecoration(
-            color: isDark
-                ? Colors.white.withValues(alpha: .07)
-                : const Color(0xFFF1F5F9),
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: .08)
-                  : const Color(0xFFE2E8F0),
-            ),
-          ),
           child: Icon(
             icon,
             color: isDark ? Colors.white : const Color(0xFF0F172A),

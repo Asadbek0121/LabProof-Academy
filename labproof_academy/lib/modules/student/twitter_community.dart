@@ -155,6 +155,7 @@ class _TwitterStyleCommunityState extends State<TwitterStyleCommunity> {
                 tooltip: 'Bildirishnomalar',
                 onPressed: widget.onNotifications,
                 icon: const Icon(Icons.notifications_none_rounded),
+                backgroundColor: Colors.transparent,
               ),
             ),
           ],

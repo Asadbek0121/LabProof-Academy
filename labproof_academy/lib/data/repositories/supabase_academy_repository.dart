@@ -752,6 +752,14 @@ class SupabaseAcademyRepository {
   }
 
   Future<StudentProfile> updateOwnProfile(StudentProfileUpdate profile) async {
+    try {
+      return await updateStudentProfile(profile);
+    } on Object {
+      // If the auth Edge Function is not deployed yet, fall back to the direct
+      // profile write path. RLS migrations below keep this path restricted to
+      // the signed-in user's own profile row.
+    }
+
     final user = await _currentUserOrThrow();
     final phone = profile.phone.trim().isEmpty
         ? (user.phone ?? '').trim()
@@ -779,16 +787,7 @@ class SupabaseAcademyRepository {
       'updated_at': DateTime.now().toIso8601String(),
     };
 
-    final updated = await _supabase
-        .from('profiles')
-        .update(payload)
-        .eq('id', user.id)
-        .select('id')
-        .maybeSingle();
-
-    if (updated == null) {
-      await _supabase.from('profiles').insert(payload);
-    }
+    await _supabase.from('profiles').upsert(payload, onConflict: 'id');
 
     return _loadProfile(user);
   }
@@ -1191,7 +1190,8 @@ class SupabaseAcademyRepository {
   }
 
   Future<StudentProfile> _loadProfile(User user) async {
-    final row = await _loadProfileRow(user.id);
+    var row = await _loadProfileRow(user.id);
+    row ??= await _ensureOwnProfileRow(user);
 
     final metadata = user.userMetadata ?? {};
     final roleName = (row?['role'] ?? 'student').toString();
@@ -1235,6 +1235,29 @@ class SupabaseAcademyRepository {
           .select(fallbackColumns)
           .eq('id', userId)
           .maybeSingle();
+    }
+  }
+
+  Future<Map<String, dynamic>?> _ensureOwnProfileRow(User user) async {
+    final metadata = user.userMetadata ?? {};
+    final fullName = (metadata['full_name'] ?? metadata['name'] ?? 'Student')
+        .toString()
+        .trim();
+    final phone = (user.phone ?? metadata['phone'] ?? '').toString().trim();
+    final now = DateTime.now().toIso8601String();
+    final payload = <String, Object?>{
+      'id': user.id,
+      'full_name': fullName.isEmpty ? 'Student' : fullName,
+      'phone': phone.isEmpty ? null : phone,
+      'role': 'student',
+      'updated_at': now,
+    };
+
+    try {
+      await _supabase.from('profiles').upsert(payload, onConflict: 'id');
+      return _loadProfileRow(user.id);
+    } on Object {
+      return null;
     }
   }
 
@@ -3002,41 +3025,44 @@ class SupabaseAcademyRepository {
     String? topicId,
   }) async {
     final user = await _currentUserOrThrow();
+    await _ensureOwnProfileRow(user);
 
-    final response = await _supabase
-        .from('community_posts')
-        .insert({
-          'author_id': user.id,
-          'title': _communityPostTitle(content),
-          'content': content,
-          'category': category,
-          'attachments': attachments ?? [],
-          'module_id': moduleId,
-          'topic_id': topicId,
-          'likes_count': 0,
-          'comments_count': 0,
-        })
-        .select()
-        .single();
+    final payload = {
+      'author_id': user.id,
+      'title': _communityPostTitle(content),
+      'content': content,
+      'category': category,
+      'attachments': attachments ?? [],
+      'module_id': moduleId,
+      'topic_id': topicId,
+      'likes_count': 0,
+      'comments_count': 0,
+    };
+    await _supabase.from('community_posts').insert(payload);
+    final response = await _findLatestOwnCommunityPost(
+      userId: user.id,
+      content: content,
+    );
 
     final profile = await _loadProfile(user);
 
     return CommunityPost(
-      id: response['id'].toString(),
+      id: (response?['id'] ?? 'local-${DateTime.now().millisecondsSinceEpoch}')
+          .toString(),
       authorId: user.id,
       authorName: profile.fullName,
       authorAvatar: profile.avatarUrl,
       authorBadge: _getRoleBadge(profile.role.name),
-      content: response['content'].toString(),
+      content: (response?['content'] ?? content).toString(),
       likes: 0,
       reposts: 0,
       replies: 0,
       isLiked: false,
       isReposted: false,
       isBookmarked: false,
-      createdAt: DateTime.parse(response['created_at'].toString()),
+      createdAt: _parseDate(response?['created_at']) ?? DateTime.now(),
       attachments:
-          (response['attachments'] as List<dynamic>?)
+          (response?['attachments'] as List<dynamic>?)
               ?.map((a) => a.toString())
               .toList() ??
           [],
@@ -3217,44 +3243,65 @@ class SupabaseAcademyRepository {
     String? replyToPostId,
   }) async {
     final user = await _currentUserOrThrow();
+    await _ensureOwnProfileRow(user);
 
-    final response = await _supabase
-        .from('community_posts')
-        .insert({
-          'author_id': user.id,
-          'title': _communityPostTitle(content),
-          'content': content,
-          'attachments': attachments ?? [],
-          'likes_count': 0,
-          'reposts_count': 0,
-          'replies_count': 0,
-          'views_count': 0,
-        })
-        .select()
-        .single();
+    final payload = {
+      'author_id': user.id,
+      'title': _communityPostTitle(content),
+      'content': content,
+      'attachments': attachments ?? [],
+      'likes_count': 0,
+      'reposts_count': 0,
+      'replies_count': 0,
+      'views_count': 0,
+    };
+    await _supabase.from('community_posts').insert(payload);
+    final response = await _findLatestOwnCommunityPost(
+      userId: user.id,
+      content: content,
+    );
 
     final profile = await _loadProfile(user);
 
     return CommunityPost(
-      id: response['id'].toString(),
+      id: (response?['id'] ?? 'local-${DateTime.now().millisecondsSinceEpoch}')
+          .toString(),
       authorId: user.id,
       authorName: profile.fullName,
       authorAvatar: profile.avatarUrl,
       authorBadge: _getRoleBadge(profile.role.name),
-      content: response['content'].toString(),
+      content: (response?['content'] ?? content).toString(),
       likes: 0,
       reposts: 0,
       replies: 0,
       isLiked: false,
       isReposted: false,
       isBookmarked: false,
-      createdAt: DateTime.parse(response['created_at'].toString()),
+      createdAt: _parseDate(response?['created_at']) ?? DateTime.now(),
       attachments:
-          (response['attachments'] as List<dynamic>?)
+          (response?['attachments'] as List<dynamic>?)
               ?.map((a) => a.toString())
               .toList() ??
           [],
     );
+  }
+
+  Future<Map<String, dynamic>?> _findLatestOwnCommunityPost({
+    required String userId,
+    required String content,
+  }) async {
+    try {
+      return await _supabase
+          .from('community_posts')
+          .select()
+          .eq('author_id', userId)
+          .eq('content', content)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+    } on Object {
+      return null;
+    }
   }
 
   String _communityPostTitle(String content) {
