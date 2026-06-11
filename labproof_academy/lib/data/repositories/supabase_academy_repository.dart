@@ -131,6 +131,39 @@ class SupabaseAcademyRepository {
     });
   }
 
+  Future<void> savePushToken({
+    required String token,
+    required String platform,
+    String? appVersion,
+    String? deviceId,
+  }) async {
+    final user = await _currentUserOrThrow();
+    await _supabase.from('user_push_tokens').upsert({
+      'user_id': user.id,
+      'token': token,
+      'platform': platform,
+      'app_version': appVersion,
+      'device_id': deviceId,
+      'is_active': true,
+      'last_seen_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
+    }, onConflict: 'token');
+  }
+
+  Future<void> setPushTokenActive({
+    required String token,
+    required bool isActive,
+  }) async {
+    await _currentUserOrThrow();
+    await _supabase
+        .from('user_push_tokens')
+        .update({
+          'is_active': isActive,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('token', token);
+  }
+
   Future<void> saveAdminSetting({
     required String section,
     required String key,
@@ -917,13 +950,14 @@ class SupabaseAcademyRepository {
     Future<List<Map<String, dynamic>>> readRows(
       String table,
       String select,
+      String orderColumn,
     ) async {
       try {
         final rows = await _supabase
             .from(table)
             .select(select)
             .eq('user_id', user.id)
-            .order('created_at', ascending: false)
+            .order(orderColumn, ascending: false)
             .limit(12);
         return (rows as List<dynamic>).cast<Map<String, dynamic>>();
       } on Object {
@@ -933,22 +967,48 @@ class SupabaseAcademyRepository {
 
     final devices = await readRows(
       'devices',
-      'id, device_name, platform, browser, ip_address, location, last_seen_at, revoked_at, created_at',
+      'id, device_id, device_name, platform, browser, ip_address, location, last_seen_at, revoked_at, created_at',
+      'last_seen_at',
     );
     final legacySessions = devices.isEmpty
         ? await readRows(
             'active_sessions',
             'id, device_name, browser, ip_address, location, last_seen_at, revoked_at, created_at',
+            'last_seen_at',
           )
         : const <Map<String, dynamic>>[];
+    final activeDevices = (devices.isNotEmpty ? devices : legacySessions)
+        .where((row) => row['revoked_at'] == null)
+        .toList();
 
     return {
-      'devices': devices.isNotEmpty ? devices : legacySessions,
+      'devices': activeDevices,
       'loginHistory': await readRows(
         'login_history',
         'id, ip_address, user_agent, location, success, created_at',
+        'created_at',
       ),
     };
+  }
+
+  Future<void> registerStudentDevice({
+    required String deviceId,
+    required String deviceName,
+    required String platform,
+    String? browser,
+    Map<String, Object?> metadata = const {},
+  }) async {
+    final user = await _currentUserOrThrow();
+    await _supabase.from('devices').upsert({
+      'user_id': user.id,
+      'device_id': deviceId,
+      'device_name': deviceName,
+      'platform': platform,
+      'browser': browser,
+      'metadata': metadata,
+      'last_seen_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toIso8601String(),
+    }, onConflict: 'user_id,device_id');
   }
 
   Future<void> saveStudentSecurityPreferences({

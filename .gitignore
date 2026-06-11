@@ -1,6 +1,9 @@
 **/.env
 **/.env.*
 !**/.env.example
+.DS_Store
+**/.DS_Store
+supabase/.temp/
 
 # GitHub rejects files over 100 MB; these are generated local artifacts.
 edulab-admin/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node

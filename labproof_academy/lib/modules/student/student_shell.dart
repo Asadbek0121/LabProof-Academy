@@ -26,6 +26,7 @@ import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import '../../core/constants/app_language.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/services/app_update_service.dart';
+import '../../core/services/push_notification_service.dart';
 import '../../core/widgets/shared_widgets.dart';
 import '../../data/models/academy_models.dart';
 import '../../data/repositories/supabase_academy_repository.dart';
@@ -86,6 +87,7 @@ class _StudentSecurityStore {
   static const _pinHashKey = 'student_security_pin_hash_v2';
   static const _legacyPinKey = 'student_security_pin';
   static const _biometricKey = 'student_biometric_lock';
+  static const _deviceIdKey = 'student_security_device_id';
   static const _failedAttemptsKey = 'student_security_failed_attempts';
   static const _lockedUntilKey = 'student_security_locked_until';
 
@@ -136,6 +138,16 @@ class _StudentSecurityStore {
     await prefs.setBool(_biometricKey, value);
   }
 
+  static Future<String> deviceId() async {
+    final existing = await _secureStorage.read(key: _deviceIdKey);
+    if (existing != null && existing.isNotEmpty) return existing;
+    final random = math.Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    final id = base64UrlEncode(bytes).replaceAll('=', '');
+    await _secureStorage.write(key: _deviceIdKey, value: id);
+    return id;
+  }
+
   static Future<DateTime?> lockedUntil() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_lockedUntilKey);
@@ -173,9 +185,18 @@ class _StudentBiometricAuth {
 
   static final LocalAuthentication _auth = LocalAuthentication();
 
+  static Future<List<BiometricType>> availableBiometrics() async {
+    try {
+      return _auth.getAvailableBiometrics();
+    } on Object {
+      return const [];
+    }
+  }
+
   static Future<bool> canCheck() async {
     try {
-      return await _auth.canCheckBiometrics || await _auth.isDeviceSupported();
+      final biometrics = await availableBiometrics();
+      return biometrics.isNotEmpty && await _auth.canCheckBiometrics;
     } on Object {
       return false;
     }
@@ -188,8 +209,9 @@ class _StudentBiometricAuth {
       return _auth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
-          biometricOnly: false,
+          biometricOnly: true,
           stickyAuth: true,
+          sensitiveTransaction: false,
         ),
       );
     } on Object {
@@ -198,11 +220,12 @@ class _StudentBiometricAuth {
   }
 }
 
-class _StudentShellState extends State<StudentShell> {
+class _StudentShellState extends State<StudentShell>
+    with WidgetsBindingObserver {
   static const _repository = SupabaseAcademyRepository();
   static const _appVersionName = String.fromEnvironment(
     'APP_VERSION_NAME',
-    defaultValue: '1.3.1',
+    defaultValue: '1.3.2',
   );
 
   _StudentTab _tab = _StudentTab.home;
@@ -230,11 +253,14 @@ class _StudentShellState extends State<StudentShell> {
   String _savedSecurityPinHash = '';
   bool _biometricSecurityEnabled = false;
   DateTime? _securityLockedUntil;
+  bool _wasBackgrounded = false;
+  bool _biometricAuthInProgress = false;
   String? _loadError;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     registerOpenSupportSheet(() {
       unawaited(_openAdminSupportSheet());
     });
@@ -299,9 +325,11 @@ class _StudentShellState extends State<StudentShell> {
 
   Future<bool> _unlockWithBiometric() async {
     if (!_biometricSecurityEnabled) return false;
+    _biometricAuthInProgress = true;
     final authenticated = await _StudentBiometricAuth.authenticate(
       reason: 'LabProof Academy ilovasiga kirish uchun tasdiqlang',
     );
+    _biometricAuthInProgress = false;
     if (authenticated && mounted) {
       setState(() => _lockedByPin = false);
     }
@@ -309,7 +337,27 @@ class _StudentShellState extends State<StudentShell> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      if (!_biometricAuthInProgress) _wasBackgrounded = true;
+      return;
+    }
+
+    if (state != AppLifecycleState.resumed || !_wasBackgrounded) return;
+    _wasBackgrounded = false;
+    if (_checkingSecurity || _biometricAuthInProgress) return;
+    final securityEnabled =
+        _savedSecurityPinHash.isNotEmpty || _biometricSecurityEnabled;
+    if (!securityEnabled || _lockedByPin || !mounted) return;
+    setState(() => _lockedByPin = true);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _notificationPoller?.cancel();
     super.dispose();
   }
@@ -339,6 +387,14 @@ class _StudentShellState extends State<StudentShell> {
         _notifications = notifications;
         _loading = false;
       });
+      if (notificationsEnabled) {
+        unawaited(
+          PushNotificationService.instance.configure(
+            repository: _repository,
+            enabled: true,
+          ),
+        );
+      }
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -374,8 +430,18 @@ class _StudentShellState extends State<StudentShell> {
 
     try {
       await _repository.setNotificationsEnabled(value);
+      final pushReady = await PushNotificationService.instance.configure(
+        repository: _repository,
+        enabled: value,
+        requestPermission: value,
+      );
       if (value) {
         await _refreshNotifications(silent: true);
+        if (mounted && !pushReady) {
+          _showInfo(
+            'Telefon bildirishnomalariga ruxsat berilmadi yoki Firebase sozlanmagan.',
+          );
+        }
       }
     } on Object catch (error) {
       if (!mounted) return;
@@ -1419,10 +1485,41 @@ class _StudentPinLockScreen extends StatefulWidget {
 class _StudentPinLockScreenState extends State<_StudentPinLockScreen> {
   String _pin = '';
   bool _checking = false;
+  bool _autoBiometricTried = false;
 
   bool get _isLocked {
     final lockedUntil = widget.lockedUntil;
     return lockedUntil != null && lockedUntil.isAfter(DateTime.now());
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleAutoBiometric();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StudentPinLockScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.loading != widget.loading ||
+        oldWidget.biometricEnabled != widget.biometricEnabled ||
+        oldWidget.lockedUntil != widget.lockedUntil) {
+      _scheduleAutoBiometric();
+    }
+  }
+
+  void _scheduleAutoBiometric() {
+    if (_autoBiometricTried ||
+        widget.loading ||
+        !widget.biometricEnabled ||
+        _isLocked) {
+      return;
+    }
+    _autoBiometricTried = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.loading || _checking || _isLocked) return;
+      unawaited(_biometric());
+    });
   }
 
   Future<void> _append(String value) async {
@@ -11111,15 +11208,6 @@ class _ProfileScreen extends StatelessWidget {
     final profileMuted = isDark
         ? const Color(0xFF9CA3AF)
         : const Color(0xFF64748B);
-    final profileGradient = isDark
-        ? const [Color(0xFF020A17), Color(0xFF071426), Color(0xFF0B1322)]
-        : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFF1F5F9)];
-    final profileBorder = isDark
-        ? Colors.white.withValues(alpha: .06)
-        : const Color(0xFFE2E8F0);
-    final profileShadow = isDark
-        ? const Color(0xFF020617).withValues(alpha: .22)
-        : AppColors.studentPrimary.withValues(alpha: .07);
     final profileCode = _profileDisplayCode(profile);
     final activeCourses = data.modules
         .where((module) => module.isUnlocked)
@@ -11174,25 +11262,8 @@ class _ProfileScreen extends StatelessWidget {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 820),
-        child: Container(
-          width: double.infinity,
+        child: Padding(
           padding: const EdgeInsets.fromLTRB(6, 14, 6, 126),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: profileGradient,
-            ),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: profileBorder),
-            boxShadow: [
-              BoxShadow(
-                color: profileShadow,
-                blurRadius: 30,
-                offset: const Offset(0, 16),
-              ),
-            ],
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -11561,8 +11632,52 @@ class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
     _load();
   }
 
+  String _currentDeviceName() {
+    if (kIsWeb) return 'Web brauzer';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'Android telefon';
+      case TargetPlatform.iOS:
+        return 'iPhone';
+      case TargetPlatform.macOS:
+        return 'Mac';
+      case TargetPlatform.windows:
+        return 'Windows kompyuter';
+      case TargetPlatform.linux:
+        return 'Linux kompyuter';
+      case TargetPlatform.fuchsia:
+        return 'Fuchsia qurilma';
+    }
+  }
+
+  Future<String> _registerCurrentDevice() async {
+    final deviceId = await _StudentSecurityStore.deviceId();
+    final packageInfo = await PackageInfo.fromPlatform().catchError(
+      (_) => PackageInfo(
+        appName: 'LabProof Academy',
+        packageName: 'labproof.academy',
+        version: 'dev',
+        buildNumber: 'dev',
+      ),
+    );
+    await _repository.registerStudentDevice(
+      deviceId: deviceId,
+      deviceName: _currentDeviceName(),
+      platform: defaultTargetPlatform.name,
+      browser: kIsWeb ? 'Browser' : 'Mobile app',
+      metadata: {
+        'app_name': packageInfo.appName,
+        'app_version': packageInfo.version,
+        'build_number': packageInfo.buildNumber,
+        'last_opened_from': 'student_security',
+      },
+    );
+    return deviceId;
+  }
+
   Future<void> _load() async {
     try {
+      await _registerCurrentDevice().catchError((_) => '');
       final results = await Future.wait<Object>([
         _StudentSecurityStore.readPinHash(),
         _StudentSecurityStore.isBiometricEnabled(),
@@ -11583,6 +11698,21 @@ class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _openActiveDevices() async {
+    final currentDeviceId = await _StudentSecurityStore.deviceId();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _ActiveDevicesSheet(
+        devices: _devices,
+        currentDeviceId: currentDeviceId,
+        formatDate: _formatDate,
+      ),
+    );
   }
 
   void _showMessage(String text, {bool error = false}) {
@@ -11860,6 +11990,7 @@ class _ProfileSecuritySheetState extends State<_ProfileSecuritySheet> {
                       title: 'Faol qurilmalar',
                       subtitle: 'Hisobingizga ulangan qurilmalar',
                       trailing: _SecurityCountPill('${_devices.length} ta'),
+                      onTap: _openActiveDevices,
                     ),
                     _SecurityActionTile(
                       icon: Icons.logout_rounded,
@@ -11991,6 +12122,192 @@ class _SecurityHeaderCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ActiveDevicesSheet extends StatelessWidget {
+  const _ActiveDevicesSheet({
+    required this.devices,
+    required this.currentDeviceId,
+    required this.formatDate,
+  });
+
+  final List<Map<String, dynamic>> devices;
+  final String currentDeviceId;
+  final String Function(dynamic raw) formatDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final sortedDevices = [...devices]
+      ..sort((a, b) {
+        final bDate = DateTime.tryParse(
+          (b['last_seen_at'] ?? b['created_at'] ?? '').toString(),
+        );
+        final aDate = DateTime.tryParse(
+          (a['last_seen_at'] ?? a['created_at'] ?? '').toString(),
+        );
+        return (bDate ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+          aDate ?? DateTime.fromMillisecondsSinceEpoch(0),
+        );
+      });
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          8,
+          20,
+          20 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * .76,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const IconBadge(
+                    icon: Icons.devices_other_rounded,
+                    color: AppColors.studentPrimary,
+                    size: 54,
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Faol qurilmalar',
+                          style: TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Hisobingizga kirgan qurilmalar ro‘yxati',
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              if (sortedDevices.isEmpty)
+                const _ProfileEmptyPanel(
+                  icon: Icons.devices_other_rounded,
+                  title: 'Faol qurilma topilmadi',
+                  subtitle:
+                      'Ushbu sahifani qayta ochganingizda joriy qurilma ro‘yxatga qo‘shiladi.',
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: sortedDevices.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final row = sortedDevices[index];
+                      final isCurrent =
+                          row['device_id']?.toString() == currentDeviceId;
+                      final platform = (row['platform'] ?? '').toString();
+                      final title = (row['device_name'] ?? 'Faol qurilma')
+                          .toString();
+                      final subtitleParts = [
+                        if (platform.isNotEmpty) platform,
+                        (row['browser'] ?? '').toString(),
+                        formatDate(row['last_seen_at'] ?? row['created_at']),
+                      ].where((value) => value.trim().isNotEmpty).toList();
+
+                      return Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: isCurrent
+                              ? AppColors.studentPrimary.withValues(alpha: .07)
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: isCurrent
+                                ? AppColors.studentPrimary.withValues(
+                                    alpha: .24,
+                                  )
+                                : const Color(0xFFE2E8F0),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            IconBadge(
+                              icon: Icons.smartphone_rounded,
+                              color: isCurrent
+                                  ? AppColors.studentPrimary
+                                  : const Color(0xFF64748B),
+                              size: 48,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    title,
+                                    style: const TextStyle(
+                                      color: Color(0xFF0F172A),
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    subtitleParts.join(' • '),
+                                    style: const TextStyle(
+                                      color: Color(0xFF64748B),
+                                      height: 1.25,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (isCurrent)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.successGreen.withValues(
+                                    alpha: .12,
+                                  ),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Text(
+                                  'Joriy',
+                                  style: TextStyle(
+                                    color: AppColors.successGreen,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -13012,7 +13329,7 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
       : widget.appVersionName;
   String get _buildNumber => _packageInfo?.buildNumber.trim().isNotEmpty == true
       ? _packageInfo!.buildNumber
-      : '121';
+      : '122';
   String get _versionLabel => '$_versionName ($_buildNumber)';
 
   @override
@@ -13025,9 +13342,9 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
     final packageInfo = await PackageInfo.fromPlatform().catchError(
       (_) => PackageInfo(
         appName: 'LabProof Academy',
-        packageName: 'uz.labproof.academy',
+        packageName: 'com.labproof.labproof_academy',
         version: widget.appVersionName,
-        buildNumber: '121',
+        buildNumber: '122',
         buildSignature: '',
         installerStore: null,
       ),
@@ -13057,13 +13374,21 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
         'facebook': 'https://facebook.com/labproofacademy',
         ...socialLinks,
       };
-      _termsText = legalTerms?['text']?.toString().trim().isNotEmpty == true
-          ? legalTerms!['text'].toString()
-          : _labproofTermsText;
-      _privacyText = legalPrivacy?['text']?.toString().trim().isNotEmpty == true
-          ? legalPrivacy!['text'].toString()
-          : _labproofPrivacyText;
+      _termsText = _legalTextOrFallback(
+        legalTerms?['text'],
+        _labproofTermsText,
+      );
+      _privacyText = _legalTextOrFallback(
+        legalPrivacy?['text'],
+        _labproofPrivacyText,
+      );
     });
+  }
+
+  String _legalTextOrFallback(Object? value, String fallback) {
+    final text = value?.toString().trim() ?? '';
+    if (text.length < 900) return fallback;
+    return text;
   }
 
   Future<void> _openUrl(String url) async {
@@ -13094,6 +13419,8 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
       builder: (context) => _AboutAppDetailsSheet(
         versionLabel: _versionLabel,
         latest: !_hasAvailableUpdate,
+        socialLinks: _socialLinks,
+        onOpen: _openUrl,
       ),
     );
   }
@@ -13103,13 +13430,30 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
       final review = InAppReview.instance;
       if (await review.isAvailable()) {
         await review.requestReview();
+        return;
+      }
+      final packageName = _packageInfo?.packageName.trim().isNotEmpty == true
+          ? _packageInfo!.packageName
+          : 'com.labproof.labproof_academy';
+      final storeUri = defaultTargetPlatform == TargetPlatform.android
+          ? Uri.parse('market://details?id=$packageName')
+          : Uri.parse('https://labproof.uz/app');
+      final fallbackUri = defaultTargetPlatform == TargetPlatform.android
+          ? Uri.parse(
+              'https://play.google.com/store/apps/details?id=$packageName',
+            )
+          : Uri.parse('https://labproof.uz/app');
+      if (await canLaunchUrl(storeUri)) {
+        await launchUrl(storeUri, mode: LaunchMode.externalApplication);
       } else {
-        await review.openStoreListing(appStoreId: 'labproof-academy');
+        await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
       }
     } on Object {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Baholash oynasini ochib bo‘lmadi.')),
+        const SnackBar(
+          content: Text('Baholash oynasini hozircha ochib bo‘lmadi.'),
+        ),
       );
     }
   }
@@ -13117,6 +13461,7 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
   Future<void> _shareApp() async {
     await SharePlus.instance.share(
       ShareParams(
+        subject: 'LabProof Academy',
         text:
             'LabProof Academy ilovasini yuklab oling:\nhttps://labproof.uz/app',
       ),
@@ -13321,67 +13666,6 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
                     ? Colors.white.withValues(alpha: .08)
                     : AppColors.errorRed.withValues(alpha: .12),
                 onTap: _clearingCache ? null : _clearCache,
-              ),
-              const SizedBox(height: 18),
-              _AboutAppInfoCard(
-                versionLabel: _versionLabel,
-                surface: surface,
-                border: border,
-                muted: muted,
-                textColor: textColor,
-              ),
-              const SizedBox(height: 18),
-              _AboutSocialCard(
-                links: _socialLinks,
-                surface: surface,
-                border: border,
-                onOpen: _openUrl,
-              ),
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? AppColors.studentPrimary.withValues(alpha: .13)
-                      : AppColors.studentPrimary.withValues(alpha: .07),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: AppColors.studentPrimary.withValues(alpha: .16),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const IconBadge(
-                      icon: Icons.verified_user_outlined,
-                      color: AppColors.studentPrimary,
-                      size: 44,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Siz xavfsiz foydalanyapsiz',
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              color: AppColors.studentPrimary,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Ilovangiz muntazam ravishda yangilanadi va ma’lumotlaringiz ishonchli himoyalangan.',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: muted,
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
               ),
               const SizedBox(height: 22),
               Center(
@@ -13929,13 +14213,25 @@ class _AboutAppDetailsSheet extends StatelessWidget {
   const _AboutAppDetailsSheet({
     required this.versionLabel,
     required this.latest,
+    required this.socialLinks,
+    required this.onOpen,
   });
 
   final String versionLabel;
   final bool latest;
+  final Map<String, String> socialLinks;
+  final Future<void> Function(String url) onOpen;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final surface = isDark ? AppColors.studentSurface : Colors.white;
+    final border = isDark
+        ? Colors.white.withValues(alpha: .08)
+        : AppColors.border;
+    final muted = isDark ? AppColors.studentMuted : AppColors.muted;
+    final textColor = isDark ? Colors.white : AppColors.navy;
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.fromLTRB(
@@ -13953,20 +14249,73 @@ class _AboutAppDetailsSheet extends StatelessWidget {
               _AboutHeaderCard(
                 versionLabel: versionLabel,
                 latest: latest,
-                surface: Theme.of(context).brightness == Brightness.dark
-                    ? AppColors.studentSurface
-                    : Colors.white,
-                border: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white.withValues(alpha: .08)
-                    : AppColors.border,
-                muted: Theme.of(context).brightness == Brightness.dark
-                    ? AppColors.studentMuted
-                    : AppColors.muted,
-                textColor: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white
-                    : AppColors.navy,
+                surface: surface,
+                border: border,
+                muted: muted,
+                textColor: textColor,
               ),
               const SizedBox(height: 16),
+              _AboutAppInfoCard(
+                versionLabel: versionLabel,
+                surface: surface,
+                border: border,
+                muted: muted,
+                textColor: textColor,
+              ),
+              const SizedBox(height: 16),
+              _AboutSocialCard(
+                links: socialLinks,
+                surface: surface,
+                border: border,
+                onOpen: onOpen,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppColors.studentPrimary.withValues(alpha: .13)
+                      : AppColors.studentPrimary.withValues(alpha: .07),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: AppColors.studentPrimary.withValues(alpha: .16),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const IconBadge(
+                      icon: Icons.verified_user_outlined,
+                      color: AppColors.studentPrimary,
+                      size: 44,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Siz xavfsiz foydalanyapsiz',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: AppColors.studentPrimary,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Ilovangiz muntazam ravishda yangilanadi va ma’lumotlaringiz ishonchli himoyalangan.',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: muted,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
               _AboutBlock(
                 title: 'Ilova maqsadi',
                 body:
@@ -14000,24 +14349,34 @@ LabProof Academy ilovasidan foydalanish shartlari
 
 Oxirgi yangilanish sanasi: 09.06.2026
 
-LabProof Academy ilovasidan foydalanish orqali siz ushbu foydalanish shartlariga rozilik bildirasiz.
+LabProof Academy ilovasidan foydalanish orqali siz ushbu foydalanish shartlariga rozilik bildirasiz. Agar ushbu shartlarga rozi bo‘lmasangiz, ilovadan foydalanishni to‘xtatishingizni so‘raymiz.
 
 1. Umumiy qoidalar
-LabProof Academy - bu foydalanuvchilarga ta’lim olish, kurslarni o‘rganish va bilimlarini rivojlantirish imkonini beruvchi onlayn ta’lim platformasidir.
+LabProof Academy - bu foydalanuvchilarga ta’lim olish, kurslarni o‘rganish va bilimlarini rivojlantirish imkonini beruvchi onlayn ta’lim platformasidir. Ilova orqali foydalanuvchilar laboratoriya sohasi bo‘yicha modullar, mavzular, video va matnli darslar, testlar, progress natijalari va qo‘shimcha materiallardan foydalanishi mumkin.
 
 2. Foydalanuvchi hisobi
-Foydalanuvchi ro‘yxatdan o‘tishda to‘g‘ri ma’lumotlarni taqdim etishi shart. Hisob ma’lumotlarini uchinchi shaxslarga bermaslik foydalanuvchining mas’uliyatidadir.
+Foydalanuvchi ro‘yxatdan o‘tishda to‘g‘ri va dolzarb ma’lumotlarni taqdim etishi shart. Telefon raqami, ism-familiya va profil ma’lumotlari foydalanuvchining shaxsiy hisobini yuritish uchun ishlatiladi. Hisob ma’lumotlarini uchinchi shaxslarga bermaslik foydalanuvchining mas’uliyatidadir. Hisobingiz orqali amalga oshirilgan barcha harakatlar uchun siz javobgarsiz.
 
 3. Premium obunalar va to‘lovlar
-Premium xizmatlar pullik asosda taqdim etiladi. To‘lov muvaffaqiyatli amalga oshirilgandan so‘ng obuna faollashadi.
+Premium xizmatlar pullik asosda taqdim etiladi. Tariflar, narxlar, davomiylik va obuna afzalliklari admin panel orqali boshqariladi. To‘lovlar muvaffaqiyatli amalga oshirilgandan so‘ng obuna faollashadi. Obuna muddati tugagandan keyin premium imkoniyatlardan foydalanish cheklanadi. To‘lovlar bo‘yicha qaytarish siyosati amaldagi qonunchilik va xizmat ko‘rsatish shartlariga muvofiq amalga oshiriladi.
 
 4. Taqiqlangan harakatlar
-Ilova faoliyatiga zarar yetkazish, boshqa foydalanuvchilar ma’lumotlariga ruxsatsiz kirish va mualliflik huquqi bilan himoyalangan materiallarni ruxsatsiz tarqatish taqiqlanadi.
+Foydalanuvchiga quyidagilar taqiqlanadi: ilova faoliyatiga zarar yetkazish; boshqa foydalanuvchilarning ma’lumotlariga ruxsatsiz kirish; noqonuniy, haqoratli yoki zararli materiallarni joylashtirish; mualliflik huquqi bilan himoyalangan o‘quv materiallarini ruxsatsiz tarqatish; tizimdan noto‘g‘ri yoki firibgarlik maqsadida foydalanish.
 
 5. Intellektual mulk huquqlari
-Ilovadagi barcha materiallar, dizayn elementlari, logotiplar va kontent LabProof Academy yoki tegishli huquq egalariga tegishlidir.
+Ilovadagi barcha materiallar, dizayn elementlari, logotiplar, darslar, testlar, rasmlar, video va boshqa kontent LabProof Academy yoki tegishli huquq egalariga tegishlidir. Kontentdan faqat shaxsiy o‘qish maqsadida foydalanish mumkin. Materiallarni nusxalash, sotish, tarqatish yoki uchinchi shaxslarga berish ruxsatsiz taqiqlanadi.
 
-6. Bog‘lanish
+6. Xizmatlarning o‘zgarishi
+LabProof Academy oldindan ogohlantirmasdan xizmatlarni yangilash, o‘zgartirish, yangi funksiyalar qo‘shish yoki ayrim xizmatlarni vaqtincha to‘xtatib turish huquqiga ega. Ilova va kontent muntazam ravishda yaxshilanib boradi.
+
+7. Javobgarlikni cheklash
+Ilova mavjud texnik imkoniyatlar asosida taqdim etiladi. Internet aloqasi, qurilma sozlamalari, to‘lov providerlari yoki tashqi xizmatlardagi uzilishlar tufayli yuzaga kelgan vaqtinchalik muammolar uchun LabProof Academy javobgar hisoblanmaydi, biroq foydalanuvchilarga yordam ko‘rsatishga harakat qiladi.
+
+8. Shartlarni o‘zgartirish
+Ushbu foydalanish shartlari vaqti-vaqti bilan yangilanib turilishi mumkin. Yangilangan shartlar ilovada e’lon qilingan paytdan boshlab kuchga kiradi. Ilovadan foydalanishda davom etishingiz yangilangan shartlarga rozilik bildirganingizni anglatadi.
+
+9. Bog‘lanish
+Savollar, takliflar yoki murojaatlar uchun:
 Email: support@labproof.uz
 ''';
 
@@ -14026,25 +14385,37 @@ LabProof Academy maxfiylik siyosati
 
 Oxirgi yangilanish sanasi: 09.06.2026
 
-LabProof Academy foydalanuvchilarning shaxsiy ma’lumotlari xavfsizligini ta’minlashga katta ahamiyat beradi.
+LabProof Academy foydalanuvchilarning shaxsiy ma’lumotlari xavfsizligini ta’minlashga katta ahamiyat beradi. Ushbu siyosat qanday ma’lumotlarni yig‘ishimiz, ulardan qanday foydalanishimiz va ularni qanday himoya qilishimizni tushuntiradi.
 
 1. Yig‘iladigan ma’lumotlar
-Ism, familiya, telefon raqami, profil rasmi, qurilma ma’lumotlari, ilova versiyasi, kurs progressi, sertifikatlar va test natijalari yig‘ilishi mumkin.
+Biz quyidagi ma’lumotlarni yig‘ishimiz mumkin: ism va familiya; telefon raqami; profil rasmi; foydalanuvchi identifikatori; qurilma turi va modeli; operatsion tizim versiyasi; ilova versiyasi; IP manzil; diagnostika va xatolik ma’lumotlari; kurslar bo‘yicha progress; sertifikatlar; test natijalari; faollik tarixi; to‘lov va obuna holati.
 
 2. Ma’lumotlardan foydalanish
-Ma’lumotlar xizmatlarni taqdim etish, hisobni boshqarish, texnik yordam ko‘rsatish, to‘lovlarni qayta ishlash, xavfsizlik va statistik tahlil uchun ishlatiladi.
+Yig‘ilgan ma’lumotlar xizmatlarni taqdim etish va yaxshilash, foydalanuvchi hisobini boshqarish, texnik yordam ko‘rsatish, to‘lovlarni qayta ishlash, xavfsizlikni ta’minlash, progress va test natijalarini saqlash, bildirishnomalar yuborish va statistik tahlillar o‘tkazish uchun ishlatiladi.
 
 3. Ma’lumotlarni himoya qilish
-Ma’lumotlarni shifrlash, xavfsiz serverlar, kirishni nazorat qilish, PIN va biometrik himoya imkoniyatlari qo‘llanadi.
+Biz foydalanuvchi ma’lumotlarini himoya qilish uchun ma’lumotlarni shifrlash, xavfsiz serverlardan foydalanish, kirishni nazorat qilish mexanizmlari, PIN va biometrik himoya imkoniyatlari, RLS kabi ma’lumotlar bazasi xavfsizlik qoidalari va texnik monitoring choralarini qo‘llaymiz.
 
 4. Uchinchi tomon xizmatlari
-To‘lov tizimlari, analitika va xabarnoma xizmatlari bilan zarur ma’lumot almashinuvi amalga oshirilishi mumkin.
+Xizmatlarni taqdim etish uchun ayrim ma’lumotlar to‘lov tizimlari, analitika xizmatlari, xabarnoma xizmatlari, fayl saqlash xizmatlari va texnik infratuzilma provayderlari bilan zarur darajada almashilishi mumkin. Ushbu xizmatlar o‘z maxfiylik siyosatlariga ega.
 
-5. Foydalanuvchi huquqlari
-Foydalanuvchi o‘z ma’lumotlarini ko‘rish, yangilash, hisobni o‘chirishni so‘rash va marketing xabarlarini rad etish huquqiga ega.
+5. Cookie va texnologiyalar
+Ilova foydalanuvchi tajribasini yaxshilash, sessiyani saqlash, xavfsizlikni tekshirish va texnik xatoliklarni aniqlash uchun ayrim lokal saqlash texnologiyalari yoki kesh mexanizmlaridan foydalanishi mumkin. Keshni tozalash foydalanuvchi hisob ma’lumotlarini o‘chirmaydi.
 
-6. Bog‘lanish
+6. Foydalanuvchi huquqlari
+Foydalanuvchi o‘z ma’lumotlarini ko‘rish, yangilash, noto‘g‘ri ma’lumotlarni tuzatish, hisobni o‘chirishni so‘rash, marketing yoki ixtiyoriy bildirishnomalarni rad etish huquqiga ega. Shaxsiy ma’lumotlarni yangilash ilova profil bo‘limi orqali amalga oshiriladi.
+
+7. Bolalar maxfiyligi
+13 yoshgacha bo‘lgan bolalardan ota-ona yoki qonuniy vakil roziligisiz shaxsiy ma’lumot yig‘ilmaydi. Agar bunday ma’lumot tasodifan yig‘ilgan bo‘lsa, uni o‘chirish bo‘yicha bizga murojaat qilishingiz mumkin.
+
+8. Siyosatdagi o‘zgarishlar
+Mazkur maxfiylik siyosati vaqti-vaqti bilan yangilanishi mumkin. Muhim o‘zgarishlar haqida foydalanuvchilar ilova orqali xabardor qilinadi. Yangilangan siyosat ilovada e’lon qilingan paytdan boshlab kuchga kiradi.
+
+9. Biz bilan bog‘lanish
+Maxfiylik bo‘yicha savollar uchun:
 Email: support@labproof.uz
+
+LabProof Academy foydalanuvchi ma’lumotlari xavfsizligi va maxfiyligini ta’minlashga intiladi.
 ''';
 
 class _ProfileModalScaffold extends StatelessWidget {

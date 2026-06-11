@@ -2,6 +2,7 @@
 node_modules
 dist
 out
+desktop/runtime.env
 .env
 .env*.local
 npm-debug.log*
