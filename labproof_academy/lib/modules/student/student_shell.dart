@@ -202,7 +202,7 @@ class _StudentShellState extends State<StudentShell> {
   static const _repository = SupabaseAcademyRepository();
   static const _appVersionName = String.fromEnvironment(
     'APP_VERSION_NAME',
-    defaultValue: '1.3.0',
+    defaultValue: '1.3.1',
   );
 
   _StudentTab _tab = _StudentTab.home;
@@ -13022,7 +13022,7 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
       : widget.appVersionName;
   String get _buildNumber => _packageInfo?.buildNumber.trim().isNotEmpty == true
       ? _packageInfo!.buildNumber
-      : '120';
+      : '121';
   String get _versionLabel => '$_versionName ($_buildNumber)';
 
   @override
@@ -13037,7 +13037,7 @@ class _ProfileAboutSheetState extends State<_ProfileAboutSheet> {
         appName: 'LabProof Academy',
         packageName: 'uz.labproof.academy',
         version: widget.appVersionName,
-        buildNumber: '120',
+        buildNumber: '121',
         buildSignature: '',
         installerStore: null,
       ),

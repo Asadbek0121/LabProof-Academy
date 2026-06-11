@@ -137,39 +137,94 @@ class SupabaseAcademyRepository {
     required Map<String, Object?> value,
   }) async {
     final user = await _currentUserOrThrow();
-    await _supabase.from('admin_settings').upsert({
-      'section': section,
-      'key': key,
-      'value': value,
-      'updated_by': user.id,
-      'updated_at': DateTime.now().toIso8601String(),
-    }, onConflict: 'section,key');
+    try {
+      await _supabase.from('admin_settings').upsert({
+        'section': section,
+        'key': key,
+        'value': value,
+        'updated_by': user.id,
+        'updated_at': DateTime.now().toIso8601String(),
+      }, onConflict: 'section,key');
+    } on Object {
+      final existing = await _supabase
+          .from('admin_settings')
+          .select('id')
+          .eq('section', section)
+          .order('updated_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      final payload = {
+        'section': section,
+        'value': {key: value},
+        'updated_by': user.id,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      final id = existing?['id'];
+      if (id == null) {
+        await _supabase.from('admin_settings').insert(payload);
+      } else {
+        await _supabase.from('admin_settings').update(payload).eq('id', id);
+      }
+    }
   }
 
   Future<Map<String, String>> loadPublicSocialLinks() async {
-    try {
-      final row = await _supabase
-          .from('admin_settings')
-          .select('value')
-          .eq('section', 'settings')
-          .eq('key', 'social_links')
-          .maybeSingle();
-      final value = row?['value'];
-      if (value is! Map) return const {};
-      return {
-        for (final entry in value.entries)
-          if (entry.value != null && entry.value.toString().trim().isNotEmpty)
-            entry.key.toString(): entry.value.toString().trim(),
-      };
-    } on Object {
-      return const {};
+    final links = <String, String>{};
+    final keyed = await _loadKeyedAdminValue('settings', 'social_links');
+    _collectSocialLinks(keyed, links);
+
+    for (final section in const [
+      'settings',
+      'integrations',
+      'general',
+      'about',
+    ]) {
+      final value = await _loadLegacyAdminSection(section);
+      _collectSocialLinks(value, links);
     }
+    return links;
   }
 
   Future<Map<String, dynamic>?> loadPublicAdminSetting({
     required String section,
     required String key,
   }) async {
+    final keyed = await _loadKeyedAdminValue(section, key);
+    if (keyed != null) return keyed;
+
+    final legacy = await _loadLegacyAdminSection(section);
+    final aliases = switch (key) {
+      'legal_terms' => const [
+        'legal_terms',
+        'terms',
+        'terms_text',
+        'termsText',
+      ],
+      'legal_privacy' => const [
+        'legal_privacy',
+        'privacy',
+        'privacy_text',
+        'privacyText',
+      ],
+      _ => <String>[key],
+    };
+    for (final alias in aliases) {
+      final nested = _settingMap(legacy?[alias]);
+      if (nested != null) return nested;
+      final text = legacy?[alias]?.toString().trim();
+      if (text != null && text.isNotEmpty) return {'text': text};
+    }
+    if (legacy?.containsKey('text') == true) return legacy;
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _loadKeyedAdminValue(
+    String section,
+    String key,
+  ) async {
+    final publicValue = await _loadPublicAppSetting(section, key);
+    if (publicValue != null) return publicValue;
+
     try {
       final row = await _supabase
           .from('admin_settings')
@@ -178,11 +233,71 @@ class SupabaseAcademyRepository {
           .eq('key', key)
           .maybeSingle();
       final value = row?['value'];
-      if (value is Map<String, dynamic>) return value;
-      if (value is Map) return value.cast<String, dynamic>();
-      return null;
+      return _settingMap(value);
     } on Object {
       return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _loadPublicAppSetting(
+    String section,
+    String key,
+  ) async {
+    try {
+      final row = await _supabase
+          .from('public_app_settings')
+          .select('value')
+          .eq('section', section)
+          .eq('key', key)
+          .eq('is_active', true)
+          .maybeSingle();
+      return _settingMap(row?['value']);
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _loadLegacyAdminSection(String section) async {
+    try {
+      final row = await _supabase
+          .from('admin_settings')
+          .select('*')
+          .eq('section', section)
+          .order('updated_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      return _settingMap(row?['value']) ?? _settingMap(row?['values']);
+    } on Object {
+      return null;
+    }
+  }
+
+  static Map<String, dynamic>? _settingMap(Object? value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return value.cast<String, dynamic>();
+    if (value is String && value.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map) return decoded.cast<String, dynamic>();
+      } on Object {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  static void _collectSocialLinks(
+    Map<String, dynamic>? source,
+    Map<String, String> links,
+  ) {
+    if (source == null) return;
+    for (final nestedKey in const ['social_links', 'socialLinks']) {
+      _collectSocialLinks(_settingMap(source[nestedKey]), links);
+    }
+    for (final key in const ['telegram', 'instagram', 'youtube', 'facebook']) {
+      final value = source[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) links[key] = value;
     }
   }
 
